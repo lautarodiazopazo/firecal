@@ -14,6 +14,7 @@ import os
 import re
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import requests
@@ -31,6 +32,7 @@ FIRE_TERMS = '(wildfire OR wildfires OR "forest fire" OR incendio OR incendios O
 TITLE_FIRE = re.compile(r"incendi|incêndi|fuego|quema|queimad|wildfire|fire|bushfire|forest fire", re.I)
 YEAR = re.compile(r"\b(19|20)\d{2}\b")
 
+COUNTRY_PT = {"Brazil": "Brasil"}
 COUNTRY_ES = {"Argentina": "Argentina", "Brazil": "Brasil", "Chile": "Chile", "Bolivia": "Bolivia",
               "Paraguay": "Paraguay", "Uruguay": "Uruguay", "Peru": "Perú", "Colombia": "Colombia",
               "Venezuela": "Venezuela", "Ecuador": "Ecuador", "Guyana": "Guyana", "Suriname": "Surinam",
@@ -155,7 +157,7 @@ def wiki_search(term, lang, limit=30):
     try:
         r = requests.get(f"https://{lang}.wikipedia.org/w/api.php",
                          params={"action": "query", "list": "search", "srsearch": term, "format": "json",
-                                 "srlimit": limit, "srprop": "snippet"}, headers=UA, timeout=20)
+                                 "srlimit": limit, "srprop": "snippet"}, headers=UA, timeout=10)
         r.raise_for_status()
         res = [{"title": s["title"], "lang": lang,
                 "url": f"https://{lang}.wikipedia.org/wiki/{s['title'].replace(' ', '_')}",
@@ -168,7 +170,7 @@ def wiki_search(term, lang, limit=30):
 
 
 def wiki_events(provs, countries, y0, y1, max_items=12):
-    """Artículos de Wikipedia sobre incendios cuyo título menciona un año del período."""
+    """Artículos de Wikipedia sobre incendios en esos lugares cuyo título menciona un año del período."""
     terms = []
     for p, c in provs:
         terms += [("es", f"incendios {p}")] + ([("pt", f"incêndios {p}")] if c == "Brazil" else [])
@@ -178,10 +180,21 @@ def wiki_events(provs, countries, y0, y1, max_items=12):
             terms += [("pt", "incêndios florestais Brasil"), ("pt", "queimadas Brasil")]
     if y0 == y1:
         terms = [(lang, f"{t} {y0}") for lang, t in terms]
+    # nombres que tienen que aparecer en el título o el resumen (sin tildes, en minúscula)
+    names = {_plain(p).lower() for p, _ in provs}
+    for c in countries:
+        names |= {_plain(c).lower(), _plain(COUNTRY_ES.get(c, c)).lower(), _plain(COUNTRY_PT.get(c, c)).lower()}
+    if "Brazil" in countries:
+        names |= {"amazon", "amazonia", "pantanal", "cerrado"}
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        results = list(ex.map(lambda lt: wiki_search(lt[1], lt[0]), terms))
     seen, out = set(), []
-    for lang, t in terms:
-        for a in wiki_search(t, lang):
+    for res in results:
+        for a in res:
             if a["url"] in seen or not TITLE_FIRE.search(a["title"]):
+                continue
+            text = _plain(a["title"] + " " + a.get("snippet", "")).lower()
+            if not any(n in text for n in names):
                 continue
             years = [int(m.group(0)) for m in YEAR.finditer(a["title"])]
             if not years or not any(y0 <= y <= y1 for y in years):
