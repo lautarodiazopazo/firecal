@@ -36,6 +36,7 @@ streamlit run app/app.py
   Data and Information System (ESDIS).*
 - MODIS Collection 6.1 Active Fire product (MCD14) and VIIRS 375 m Active Fire product (VNP14IMG / VJ114IMG).
 - Basemap: © OpenStreetMap contributors (ODbL).
+- News tab: GDELT Project DOC 2.0 API (gdeltproject.org), Wikipedia (CC BY-SA); place names from Natural Earth admin-1 (public domain).
 - Software (open source): Python, pandas, NumPy, PyArrow, DuckDB, matplotlib, Streamlit, streamlit-folium,
   Folium/Leaflet, Plotly, Shapely.
 - AI assistance: Claude (Anthropic) was used to help write code and documentation; all results were run

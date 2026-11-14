@@ -9,6 +9,7 @@ import datetime as dt
 import io
 import math
 import os
+import time
 import zipfile
 
 import duckdb
@@ -23,6 +24,8 @@ import streamlit as st
 from folium.plugins import Draw
 from shapely.geometry import box, shape
 from streamlit_folium import st_folium
+
+import noticias
 
 # ------------------------------------------------------------------ config
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -75,7 +78,7 @@ TXT = {
         "k_total": "Focos en el período", "k_total_h": "Focos armonizados: celdas de 1 km con fuego por día, en escala VIIRS S-NPP.",
         "k_peak": "Mes típicamente más activo", "k_year": "Año más activo",
         "k_now": "Mes actual vs. mediana", "k_now_h": "Comparado con la mediana de los mismos días del mismo mes, {a}–{b}.",
-        "tabs": ["📅 Calendario", "📍 Mes actual vs. historia", "📈 Estacionalidad", "📊 Serie anual", "🗺️ Mapa", "⬇️ Descargas"],
+        "tabs": ["📅 Calendario", "📍 Mes actual vs. historia", "📈 Estacionalidad", "📊 Serie anual", "🗺️ Mapa", "📰 Noticias", "⬇️ Descargas"],
         "cal_mode": "Mostrar", "cal_abs": "Cantidad de focos", "cal_anom": "Anomalía vs. mediana del mes (%)",
         "cal_note": "× = sólo Terra (menor confianza; la escala de color no los usa para no aplastar el resto) · ○ = mes incompleto. Pasá el mouse para ver detalles. "
                     "La cámara de la barra del gráfico lo descarga como PNG.",
@@ -97,6 +100,15 @@ TXT = {
         "dl_prep": "Preparar", "dl_get": "Descargar", "dl_missing": "No disponible en esta instalación (falta {f}).",
         "dl_toolarge": "Son {n:,} focos: reducí la zona o el período (máximo {m:,}).",
         "dl_rows": "{n:,} filas listas.",
+        "n_intro": "Titulares de prensa (GDELT, desde 2017) y eventos destacados (Wikipedia) sobre incendios en los lugares "
+                   "con más focos de tu zona, para el período elegido. Se muestran sólo titulares y enlaces; el contenido es de cada medio.",
+        "n_places": "Lugares con más focos en la zona y período", "n_none_places": "No hay focos para ubicar lugares.",
+        "n_extra": "Palabras clave adicionales (opcional)", "n_months": "Meses a consultar en prensa (máx. 3)",
+        "n_btn": "🔎 Buscar noticias", "n_press": "📰 Prensa (GDELT)", "n_wiki": "📚 Eventos destacados (Wikipedia)",
+        "n_pre2017": "GDELT cubre desde 2017: para años anteriores sólo hay eventos de Wikipedia.",
+        "n_rate": "GDELT está limitando consultas desde esta red (muchos usuarios a la vez). Probá de nuevo en un minuto.",
+        "n_err": "No se pudo consultar GDELT ({e}).", "n_empty": "Sin resultados.",
+        "n_wait": "Consultando… (GDELT permite 1 consulta cada 5 segundos)",
         "footer": "Proyecto del equipo para el NASA Space Apps Challenge 2026 (sede Mendoza). No es una herramienta oficial de NASA.",
         "src": {"Terra": "MODIS Terra × k", "MODIS": "MODIS × k", "SNPP": "VIIRS S-NPP", "NOAA20": "VIIRS NOAA-20 × k"},
         "months": ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"],
@@ -121,7 +133,7 @@ TXT = {
         "k_total": "Hotspots in period", "k_total_h": "Harmonized hotspots: 1-km cells with fire per day, on the VIIRS S-NPP scale.",
         "k_peak": "Typically busiest month", "k_year": "Busiest year",
         "k_now": "Current month vs. median", "k_now_h": "Compared with the median of the same days of the same month, {a}–{b}.",
-        "tabs": ["📅 Calendar", "📍 Current month vs. history", "📈 Seasonality", "📊 Annual series", "🗺️ Map", "⬇️ Downloads"],
+        "tabs": ["📅 Calendar", "📍 Current month vs. history", "📈 Seasonality", "📊 Annual series", "🗺️ Map", "📰 News", "⬇️ Downloads"],
         "cal_mode": "Show", "cal_abs": "Hotspot count", "cal_anom": "Anomaly vs. monthly median (%)",
         "cal_note": "× = Terra only (lower confidence; excluded from the color scale so they don't flatten the rest) · ○ = incomplete month. Hover for details. "
                     "The camera icon in the chart toolbar downloads it as PNG.",
@@ -143,6 +155,15 @@ TXT = {
         "dl_prep": "Prepare", "dl_get": "Download", "dl_missing": "Not available in this installation ({f} missing).",
         "dl_toolarge": "That is {n:,} hotspots: reduce the area or period (max {m:,}).",
         "dl_rows": "{n:,} rows ready.",
+        "n_intro": "Press headlines (GDELT, since 2017) and notable events (Wikipedia) about fires in the places with the most "
+                   "hotspots in your area, for the chosen period. Only headlines and links are shown; content belongs to each outlet.",
+        "n_places": "Places with the most hotspots in the area and period", "n_none_places": "No hotspots to locate places.",
+        "n_extra": "Extra keywords (optional)", "n_months": "Months to search in the press (max 3)",
+        "n_btn": "🔎 Search news", "n_press": "📰 Press (GDELT)", "n_wiki": "📚 Notable events (Wikipedia)",
+        "n_pre2017": "GDELT covers 2017 onwards: earlier years only have Wikipedia events.",
+        "n_rate": "GDELT is rate-limiting this network (many users at once). Try again in a minute.",
+        "n_err": "Could not query GDELT ({e}).", "n_empty": "No results.",
+        "n_wait": "Searching… (GDELT allows 1 query every 5 seconds)",
         "footer": "Team project for the NASA Space Apps Challenge 2026 (Mendoza local event). Not an official NASA tool.",
         "src": {"Terra": "MODIS Terra × k", "MODIS": "MODIS × k", "SNPP": "VIIRS S-NPP", "NOAA20": "VIIRS NOAA-20 × k"},
         "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
@@ -569,8 +590,79 @@ with tabs[4]:
     else:
         st.info(T["no_data"])
 
-# ------------------------------------------------------------------ 6. descargas
+# ------------------------------------------------------------------ 6. noticias
 with tabs[5]:
+    st.caption(T["n_intro"])
+    cells_n = zone_cells(WKT, D0, D1)
+    agg_n = cells_n.groupby(["g_r", "g_c"], as_index=False).focos.sum()
+    provs, ctrs = noticias.places_for((agg_n.g_r + 0.5) * GRID, (agg_n.g_c + 0.5) * GRID, agg_n.focos)
+    if provs or ctrs:
+        st.markdown(f"**{T['n_places']}:** " + ", ".join(f"{p} ({noticias.COUNTRY_ES.get(c, c)})" for p, c in provs)
+                    + ("" if provs else ", ".join(noticias.COUNTRY_ES.get(c, c) for c in ctrs)))
+    else:
+        st.info(T["n_none_places"])
+    extra = st.text_input(T["n_extra"], placeholder="ej.: Córdoba sierras" if L == "es" else "e.g. Pantanal")
+    # meses candidatos: dentro del rango y desde 2017, ordenados por anomalía
+    cand = mt[(mt.year >= noticias.GDELT_START.year)].copy()
+    cand["exceso"] = cand.focos - cand["median"].fillna(0)   # focos por encima de lo normal
+    cand = cand.sort_values(["exceso", "focos"], ascending=False)
+    labels = {(int(r.year), int(r.month)): f"{MONTHS[int(r.month) - 1]} {int(r.year)}"
+              + ("" if np.isnan(r.anom) else f" ({r.anom:+.0f} %)") for r in cand.itertuples()}
+    keys = list(labels)
+    if (D1 - D0).days <= 92 and D1 >= noticias.GDELT_START:
+        default = [k for k in keys if dt.date(k[0], k[1], 1) <= D1][:3]
+    else:
+        default = keys[:3]
+    sel_months = st.multiselect(T["n_months"], keys, default=default, max_selections=3,
+                                format_func=lambda k: labels[k])
+    if D0 < noticias.GDELT_START:
+        st.caption(T["n_pre2017"])
+    if st.button(T["n_btn"], type="primary"):
+        places = [p for p, _ in provs] + ctrs
+        q = noticias.gdelt_query(places, extra)
+        res = {"press": [], "errors": [], "wiki": []}
+        with st.spinner(T["n_wait"]):
+            for i, (yy, mm) in enumerate(sorted(sel_months)):
+                a = max(dt.date(yy, mm, 1), D0)
+                b = min(dt.date(yy, mm, pd.Period(f"{yy}-{mm:02d}").days_in_month), D1)
+                if i:
+                    time.sleep(5.5)
+                arts, err = noticias.gdelt_search(q, a, b)
+                res["press"].append(((yy, mm), arts))
+                if err:
+                    res["errors"].append(err)
+            res["wiki"] = noticias.wiki_events(provs, ctrs, D0.year, D1.year)
+        st.session_state["news"] = res
+    res = st.session_state.get("news")
+    if res:
+        c1, c2 = st.columns([3, 2])
+        with c1:
+            st.subheader(T["n_press"])
+            if any(e == "rate" for e in res["errors"]):
+                st.warning(T["n_rate"])
+            elif res["errors"]:
+                st.warning(T["n_err"].format(e=res["errors"][0]))
+            for (yy, mm), arts in res["press"]:
+                st.markdown(f"**{MONTHS[mm - 1]} {yy}**")
+                if not arts:
+                    st.caption(T["n_empty"])
+                for a in arts[:10]:
+                    d = a["date"]
+                    dd = f"{d[6:8]}/{d[4:6]}/{d[:4]}" if len(d) == 8 else ""
+                    st.markdown(f"- [{a['title'] or a['url']}]({a['url']})  \n  <small>{a['domain']} · {dd} · {a['lang']}</small>",
+                                unsafe_allow_html=True)
+        with c2:
+            st.subheader(T["n_wiki"])
+            if not res["wiki"]:
+                st.caption(T["n_empty"])
+            for a in res["wiki"]:
+                st.markdown(f"- [{a['title']}]({a['url']})  \n  <small>Wikipedia ({a['lang']})</small>",
+                            unsafe_allow_html=True)
+        st.caption("Fuentes / Sources: GDELT Project (gdeltproject.org) · Wikipedia (CC BY-SA) · "
+                   "Natural Earth (public domain).")
+
+# ------------------------------------------------------------------ 7. descargas
+with tabs[6]:
     st.caption(T["dl_intro"])
     tag = f"{D0:%Y%m%d}_{D1:%Y%m%d}"
     units = "harmonized hotspots = 1-km cells with fire per day, VIIRS S-NPP scale"

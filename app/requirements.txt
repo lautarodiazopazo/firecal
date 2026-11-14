@@ -7,3 +7,4 @@ numpy>=1.24
 pyarrow>=14
 duckdb>=1.0
 shapely>=2.0
+requests>=2.28
