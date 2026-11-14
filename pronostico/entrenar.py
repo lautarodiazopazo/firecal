@@ -122,9 +122,13 @@ def main(a):
 
     # pronóstico del próximo mes: con clima si hay datos del mes anterior, si no sólo fuego
     fc = df[df.split == "pronostico"].copy()
+    # se usa el LightGBM que mejor anduvo en validación (si hay clima para el mes de emisión)
     usa_clima = hay_clima and fc[[c for c in feats_all if c.startswith("c_")]].notna().all(axis=1).mean() > 0.9
-    fc["prob"] = fc.p_lgb_clima if usa_clima else fc.p_lgb_fuego
-    fc["modelo"] = "lgb_clima" if usa_clima else "lgb_fuego"
+    mv = met[met.split == "val"].set_index("modelo").AUC
+    if usa_clima and mv.get("lgb_clima", 0) > mv.get("lgb_fuego", 0):
+        fc["prob"], fc["modelo"] = fc.p_lgb_clima, "lgb_clima"
+    else:
+        fc["prob"], fc["modelo"] = fc.p_lgb_fuego, "lgb_fuego"
     cols = ["r5", "c5", "year", "month", "lat", "lon", "split", "y", "focos"] + modelos
     df[df.split.isin(["val", "test", "extra"])][cols].to_parquet(os.path.join(out, "predicciones.parquet"), index=False)
     fc[["r5", "c5", "year", "month", "lat", "lon", "prob", "modelo", "p_clim"]].to_parquet(

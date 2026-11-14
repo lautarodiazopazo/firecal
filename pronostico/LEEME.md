@@ -1,14 +1,15 @@
 # Pronóstico mensual de anomalías de fuego
 
-Pregunta: **¿el mes que viene tendrá más fuego de lo normal en esta celda de 0,5°?** (probabilidad)
+Pregunta: **¿dentro de L meses (1, 2 o 3) habrá más fuego de lo normal en esta celda de 0,5°?** (probabilidad)
+Cada anticipación guarda sus resultados en `data/pronostico/L1`, `L2` o `L3`.
 
 Correr desde la carpeta raíz del proyecto, con el entorno activado:
 
 ```bash
 pip install -r pronostico/requirements.txt
 python pronostico/era5_a_grilla.py --input Sudamerica/ERAS5-monthly --output data/era5_05.parquet
-python pronostico/construir_tabla.py
-python pronostico/entrenar.py
+python pronostico/construir_tabla.py --anticipacion 3
+python pronostico/entrenar.py --tabla data/pronostico/L3/tabla.parquet
 ```
 
 Resultados en `data/pronostico/`: `metricas.csv`, `importancias.csv`, `predicciones.parquet`,
