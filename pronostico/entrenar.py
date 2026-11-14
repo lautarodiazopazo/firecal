@@ -46,7 +46,7 @@ def entrenar_lgb(tr, va, feats, nombre, out):
     dva = lgb.Dataset(va[feats], va.y, reference=dtr)
     t0 = time.time()
     m = lgb.train(params, dtr, 3000, valid_sets=[dva],
-                  callbacks=[lgb.early_stopping(100, verbose=False), lgb.log_evaluation(0)])
+                  callbacks=[lgb.early_stopping(100, first_metric_only=True, verbose=False), lgb.log_evaluation(0)])
     print(f"  {nombre}: {m.best_iteration} árboles, {time.time() - t0:.0f} s")
     m.save_model(os.path.join(out, f"{nombre}.txt"))
     return m
