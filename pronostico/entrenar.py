@@ -144,17 +144,24 @@ def main(a):
 
     # métricas
     filas = []
+    ccols = [c for c in feats_all if c.startswith("c_")]
     for sp in ["val", "test", "extra"]:
         d = df[df.split == sp]
         if d.empty:
             continue
+        # 2026: los modelos con clima se evalúan sólo en los meses que ya tienen datos de ERA5
+        d_clima = d[d[ccols].notna().all(axis=1)] if ccols else d
         for mo in modelos:
-            if sp == "extra" and mo in ("p_lgb_clima", "p_mlp"):
-                continue   # 2026 sin datos de clima todavía
-            filas.append({"split": sp, "modelo": mo[2:], **metricas(d.y, d[mo], d.p_clim)})
+            if mo in ("p_lgb_clima", "p_mlp"):
+                if len(d_clima) < 0.9 * len(d):
+                    continue
+                dd = d_clima
+            else:
+                dd = d
+            filas.append({"split": sp, "modelo": mo[2:], **metricas(dd.y, dd[mo], dd.p_clim)})
     met = pd.DataFrame(filas)
     met.to_csv(os.path.join(out, "metricas.csv"), index=False)
-    print("\nMétricas (val 2020–22, test 2023–25, extra 2026 ene–oct):")
+    print("\nMétricas (val 2020–22, test 2023–25, extra = 2026, el test más reciente):")
     print(met.round(3).to_string(index=False))
 
     # pronóstico del próximo mes: con clima si hay datos del mes anterior, si no sólo fuego
