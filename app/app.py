@@ -625,6 +625,9 @@ with tabs[5]:
             for i, (yy, mm) in enumerate(sorted(sel_months)):
                 a = max(dt.date(yy, mm, 1), D0)
                 b = min(dt.date(yy, mm, pd.Period(f"{yy}-{mm:02d}").days_in_month), D1)
+                if "rate" in res["errors"]:      # GDELT nos está limitando: no insistir
+                    res["press"].append(((yy, mm), []))
+                    continue
                 if i:
                     time.sleep(5.5)
                 arts, err = noticias.gdelt_search(q, a, b)

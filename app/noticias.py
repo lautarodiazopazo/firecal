@@ -115,7 +115,7 @@ def gdelt_query(places, extra=""):
     return q
 
 
-def gdelt_search(query, d0, d1, maxrecords=40, retries=3, wait=6.0):
+def gdelt_search(query, d0, d1, maxrecords=40, retries=2, wait=6.0):
     """Devuelve (artículos, error). d0/d1: date."""
     key = f"gdelt|{query}|{d0}|{d1}|{maxrecords}"
     hit = _cache_get(key)
@@ -126,10 +126,11 @@ def gdelt_search(query, d0, d1, maxrecords=40, retries=3, wait=6.0):
     err = None
     for i in range(retries):
         try:
-            r = requests.get(GDELT_URL, params=params, headers=UA, timeout=25)
+            r = requests.get(GDELT_URL, params=params, headers=UA, timeout=15)
             if r.status_code == 429:
                 err = "rate"
-                time.sleep(wait * (i + 1))
+                if i < retries - 1:
+                    time.sleep(wait)
                 continue
             r.raise_for_status()
             txt = r.text.strip()
