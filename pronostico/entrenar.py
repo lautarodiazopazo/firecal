@@ -52,11 +52,15 @@ def entrenar_lgb(tr, va, feats, nombre, out):
     return m
 
 
-def entrenar_mlp(tr, va, feats, out, epochs=40):
+def entrenar_mlp(tr, va, feats, out, epochs=40, dispositivo="auto"):
+    print("  mlp: cargando PyTorch…", flush=True)
     import torch
     from torch import nn
 
-    dev = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+    if dispositivo == "auto":
+        dev = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+    else:
+        dev = dispositivo
     mu = tr[feats].mean()
     sd = tr[feats].std().replace(0, 1)
 
@@ -135,7 +139,7 @@ def main(a):
         modelos.append("p_lgb_clima")
         imp = pd.Series(m_c.feature_importance("gain"), index=feats_all).sort_values(ascending=False)
         if not a.sin_mlp:
-            pred = entrenar_mlp(tr_c, va, feats_all, out)
+            pred = entrenar_mlp(tr_c, va, feats_all, out, dispositivo=a.dispositivo)
             df["p_mlp"] = pred(df)
             modelos.append("p_mlp")
     else:
@@ -205,4 +209,5 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--tabla", default="data/pronostico/tabla.parquet")
     ap.add_argument("--sin-mlp", action="store_true")
+    ap.add_argument("--dispositivo", default="auto", help="auto | cpu | mps | cuda (para la red)")
     main(ap.parse_args())
