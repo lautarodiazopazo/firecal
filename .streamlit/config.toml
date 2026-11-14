@@ -1,0 +1,11 @@
+# Tema de la app. Reemplazar por los colores de la guía de marca de Space Apps
+# (https://www.spaceappschallenge.org/brand/) si se quiere.
+[theme]
+base = "light"
+primaryColor = "#E4572E"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F5F9"
+textColor = "#1B1F2A"
+
+[server]
+maxUploadSize = 50
