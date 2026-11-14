@@ -20,14 +20,12 @@ import json
 import os
 import time
 
-# En Mac, LightGBM y PyTorch traen cada uno su propia librería OpenMP; si se carga
-# LightGBM primero, importar PyTorch después puede colgarse. Por eso PyTorch va primero.
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-try:
-    import torch  # noqa: F401
-except ImportError:
-    torch = None
+import subprocess
+import sys
 
+# La red (PyTorch) se entrena en un proceso aparte (entrenar_mlp.py): en Mac, LightGBM y
+# PyTorch traen cada uno su propia librería OpenMP y juntos en un mismo proceso se cuelgan
+# o dan "segmentation fault".
 import lightgbm as lgb  # noqa: E402
 import matplotlib
 import numpy as np  # noqa: E402
@@ -60,67 +58,6 @@ def entrenar_lgb(tr, va, feats, nombre, out):
     return m
 
 
-def entrenar_mlp(tr, va, feats, out, epochs=40, dispositivo="auto"):
-    print("  mlp: preparando la red…", flush=True)
-    if torch is None:
-        raise SystemExit("PyTorch no está instalado: pip install torch (o usá --sin-mlp)")
-    from torch import nn
-
-    if dispositivo == "auto":
-        dev = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
-    else:
-        dev = dispositivo
-    mu = tr[feats].mean()
-    sd = tr[feats].std().replace(0, 1)
-
-    def prep(d):
-        x = ((d[feats] - mu) / sd).astype("float32")
-        falta = x.isna().any(axis=1).astype("float32").to_numpy()[:, None]
-        return np.hstack([x.fillna(0).to_numpy(), falta]).astype("float32")
-
-    Xtr, Xva = prep(tr), prep(va)
-    ytr = tr.y.to_numpy().astype("float32")
-    torch.manual_seed(42)
-    net = nn.Sequential(nn.Linear(Xtr.shape[1], 128), nn.ReLU(), nn.Dropout(0.2),
-                        nn.Linear(128, 64), nn.ReLU(), nn.Dropout(0.2), nn.Linear(64, 1)).to(dev)
-    opt = torch.optim.AdamW(net.parameters(), lr=1e-3, weight_decay=1e-4)
-    lossf = nn.BCEWithLogitsLoss()
-    Xtr_t, ytr_t = torch.tensor(Xtr), torch.tensor(ytr)
-    Xva_t = torch.tensor(Xva).to(dev)
-    best, best_state, paciencia = -1, None, 0
-    print(f"  mlp: entrenando en {dev}")
-    for ep in range(epochs):
-        net.train()
-        perm = torch.randperm(len(Xtr_t))
-        for k in range(0, len(perm), 4096):
-            idx = perm[k:k + 4096]
-            xb, yb = Xtr_t[idx].to(dev), ytr_t[idx].to(dev)
-            opt.zero_grad()
-            lossf(net(xb).squeeze(1), yb).backward()
-            opt.step()
-        net.eval()
-        with torch.no_grad():
-            pva = torch.sigmoid(net(Xva_t).squeeze(1)).cpu().numpy()
-        auc = roc_auc_score(va.y, pva)
-        if auc > best + 1e-4:
-            best, paciencia = auc, 0
-            best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
-        else:
-            paciencia += 1
-        print(f"    época {ep + 1:2d}  AUC val {auc:.4f}", flush=True)
-        if paciencia >= 5:
-            break
-    net.load_state_dict(best_state)
-    torch.save({"state": best_state, "feats": feats, "mu": mu.to_dict(), "sd": sd.to_dict()},
-               os.path.join(out, "mlp.pt"))
-
-    def predecir(d):
-        net.eval()
-        with torch.no_grad():
-            return torch.sigmoid(net(torch.tensor(prep(d)).to(dev)).squeeze(1)).cpu().numpy()
-    return predecir
-
-
 def main(a):
     out = os.path.dirname(a.tabla)
     df = pd.read_parquet(a.tabla)
@@ -148,9 +85,15 @@ def main(a):
         modelos.append("p_lgb_clima")
         imp = pd.Series(m_c.feature_importance("gain"), index=feats_all).sort_values(ascending=False)
         if not a.sin_mlp:
-            pred = entrenar_mlp(tr_c, va, feats_all, out, dispositivo=a.dispositivo)
-            df["p_mlp"] = pred(df)
-            modelos.append("p_mlp")
+            print("  mlp: entrenando en un proceso aparte (entrenar_mlp.py)…", flush=True)
+            script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "entrenar_mlp.py")
+            r = subprocess.run([sys.executable, script, "--tabla", a.tabla, "--dispositivo", a.dispositivo])
+            pm = os.path.join(out, "pred_mlp.parquet")
+            if r.returncode == 0 and os.path.exists(pm):
+                df = df.merge(pd.read_parquet(pm), on=["r5", "c5", "year", "month"], how="left")
+                modelos.append("p_mlp")
+            else:
+                print("  (la red falló; sigo sin ella)")
     else:
         imp = pd.Series(m_f.feature_importance("gain"), index=feats_fuego).sort_values(ascending=False)
     (imp / imp.sum()).rename("importancia").to_csv(os.path.join(out, "importancias.csv"))
@@ -218,5 +161,5 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--tabla", default="data/pronostico/tabla.parquet")
     ap.add_argument("--sin-mlp", action="store_true")
-    ap.add_argument("--dispositivo", default="auto", help="auto | cpu | mps | cuda (para la red)")
+    ap.add_argument("--dispositivo", default="cpu", help="cpu | mps | cuda | auto (para la red)")
     main(ap.parse_args())
