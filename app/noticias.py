@@ -29,7 +29,71 @@ GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 GDELT_START = dt.date(2017, 1, 1)
 
 FIRE_TERMS = '(wildfire OR wildfires OR "forest fire" OR incendio OR incendios OR "incendio forestal" OR queimada OR queimadas)'
-TITLE_FIRE = re.compile(r"incendi|incêndi|fuego|quema|queimad|wildfire|fire|bushfire|forest fire", re.I)
+TITLE_FIRE = re.compile(r"incendi|incêndi|fuego|quema|queimad|wildfire|\bfires?\b|bushfire|blaze|focos? de calor|"
+                        r"brigadist|bomber", re.I)
+LANGS = {"spanish", "portuguese", "english"}
+
+# Medios reconocidos (lista curada). Se acepta el dominio o cualquier subdominio.
+MEDIOS = {
+    "Argentina": ["clarin.com", "lanacion.com.ar", "infobae.com", "pagina12.com.ar", "perfil.com", "ambito.com",
+                  "cronista.com", "tn.com.ar", "telam.com.ar", "eldestapeweb.com", "cadena3.com", "minutouno.com",
+                  "lavoz.com.ar", "losandes.com.ar", "mdzol.com", "elsol.com.ar", "diariouno.com.ar",
+                  "rionegro.com.ar", "lmneuquen.com", "laarena.com.ar", "eldiariodelapampa.com.ar",
+                  "lagaceta.com.ar", "eltribuno.com", "ellitoral.com", "lacapital.com.ar", "eldia.com",
+                  "eldiariodelarepublica.com", "elchubut.com.ar", "misionesonline.net", "diarionorte.com",
+                  "elonce.com", "elliberal.com.ar", "elancasti.com.ar", "lavozdesanjusto.com.ar", "batimes.com.ar"],
+    "Chile": ["emol.com", "latercera.com", "biobiochile.cl", "cooperativa.cl", "elmostrador.cl", "24horas.cl",
+              "t13.cl", "cnnchile.com", "df.cl", "adnradio.cl", "meganoticias.cl", "ciperchile.cl"],
+    "Brazil": ["globo.com", "uol.com.br", "estadao.com.br", "cnnbrasil.com.br", "correiobraziliense.com.br",
+               "metropoles.com", "ebc.com.br", "abril.com.br", "terra.com.br", "r7.com", "gazetadopovo.com.br",
+               "campograndenews.com.br", "midianews.com.br", "gazetadigital.com.br", "correiodoestado.com.br",
+               "oliberal.com", "acritica.com", "poder360.com.br", "cartacapital.com.br", "brasildefato.com.br",
+               "oeco.org.br", "socioambiental.org"],
+    "Bolivia": ["eldeber.com.bo", "la-razon.com", "opinion.com.bo", "lostiempos.com", "eju.tv",
+                "correodelsur.com", "erbol.com.bo", "unitel.bo", "abi.bo"],
+    "Paraguay": ["abc.com.py", "ultimahora.com", "lanacion.com.py", "hoy.com.py", "ip.gov.py"],
+    "Uruguay": ["elpais.com.uy", "elobservador.com.uy", "montevideo.com.uy", "ladiaria.com.uy", "subrayado.com.uy"],
+    "Peru": ["elcomercio.pe", "larepublica.pe", "rpp.pe", "andina.pe", "peru21.pe", "gestion.pe"],
+    "Colombia": ["eltiempo.com", "elespectador.com", "semana.com", "elcolombiano.com", "eluniversal.com.co",
+                 "caracol.com.co", "bluradio.com"],
+    "Venezuela": ["elnacional.com", "efectococuyo.com", "elpitazo.net", "eluniversal.com", "talcualdigital.com"],
+    "Ecuador": ["elcomercio.com", "eluniverso.com", "primicias.ec", "expreso.ec"],
+}
+INTERNACIONALES = ["reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "cnn.com", "efe.com", "france24.com",
+                   "dw.com", "theguardian.com", "nytimes.com", "washingtonpost.com", "aljazeera.com",
+                   "euronews.com", "elpais.com", "elmundo.es", "lavanguardia.com", "abc.es", "rfi.fr",
+                   "swissinfo.ch", "voanoticias.com", "bloomberg.com", "mongabay.com", "infoamazonia.org",
+                   "news.un.org", "nasa.gov", "nationalgeographic.com", "mercopress.com", "independent.co.uk",
+                   "npr.org", "latimes.com", "telesurtv.net", "sputniknews.lat"]
+
+
+def _dom_ok(domain, lista):
+    d = (domain or "").lower().removeprefix("www.")
+    return any(d == x or d.endswith("." + x) for x in lista)
+
+
+def filtrar_medios(arts, countries, maximo=10):
+    """Sólo medios reconocidos (locales de la zona o internacionales), en es/pt/en,
+    con un término de fuego en el título. Locales primero; sin títulos repetidos."""
+    locales = [d for c in countries for d in MEDIOS.get(c, [])]
+    otros_sa = [d for c, ds in MEDIOS.items() if c not in countries for d in ds]
+    seen, loc, intl = set(), [], []
+    for a in arts:
+        if (a.get("lang") or "").lower() not in LANGS or not TITLE_FIRE.search(a.get("title") or ""):
+            continue
+        key = re.sub(r"\W+", " ", _plain(a["title"]).lower()).strip()[:80]
+        if key in seen:
+            continue
+        if _dom_ok(a["domain"], locales):
+            a["origen"] = "local"
+            loc.append(a)
+        elif _dom_ok(a["domain"], INTERNACIONALES + otros_sa):
+            a["origen"] = "intl"
+            intl.append(a)
+        else:
+            continue
+        seen.add(key)
+    return (loc + intl)[:maximo]
 YEAR = re.compile(r"\b(19|20)\d{2}\b")
 
 COUNTRY_PT = {"Brazil": "Brasil"}
@@ -117,7 +181,7 @@ def gdelt_query(places, extra=""):
     return q
 
 
-def gdelt_search(query, d0, d1, maxrecords=40, retries=2, wait=6.0):
+def gdelt_search(query, d0, d1, maxrecords=250, retries=2, wait=6.0):
     """Devuelve (artículos, error). d0/d1: date."""
     key = f"gdelt|{query}|{d0}|{d1}|{maxrecords}"
     hit = _cache_get(key)

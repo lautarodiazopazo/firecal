@@ -107,6 +107,8 @@ TXT = {
         "n_btn": "🔎 Buscar noticias", "n_press": "📰 Prensa (GDELT)", "n_wiki": "📚 Eventos destacados (Wikipedia)",
         "n_pre2017": "GDELT cubre desde 2017: para años anteriores sólo hay eventos de Wikipedia.",
         "n_rate": "GDELT está limitando consultas desde esta red (muchos usuarios a la vez). Probá de nuevo en un minuto.",
+        "n_media": "Sólo medios reconocidos (lista curada) en español, portugués o inglés · 📍 medio de la zona · 🌐 internacional o regional.",
+        "n_filtered": "{n} artículos encontrados, pero ninguno de medios reconocidos de la lista.",
         "n_err": "No se pudo consultar GDELT ({e}).", "n_empty": "Sin resultados.",
         "n_wait": "Consultando… (GDELT permite 1 consulta cada 5 segundos)",
         "footer": "Proyecto del equipo para el NASA Space Apps Challenge 2026 (sede Mendoza). No es una herramienta oficial de NASA.",
@@ -162,6 +164,8 @@ TXT = {
         "n_btn": "🔎 Search news", "n_press": "📰 Press (GDELT)", "n_wiki": "📚 Notable events (Wikipedia)",
         "n_pre2017": "GDELT covers 2017 onwards: earlier years only have Wikipedia events.",
         "n_rate": "GDELT is rate-limiting this network (many users at once). Try again in a minute.",
+        "n_media": "Recognized outlets only (curated list) in Spanish, Portuguese or English · 📍 local outlet · 🌐 international or regional.",
+        "n_filtered": "{n} articles found, but none from recognized outlets in the list.",
         "n_err": "Could not query GDELT ({e}).", "n_empty": "No results.",
         "n_wait": "Searching… (GDELT allows 1 query every 5 seconds)",
         "footer": "Team project for the NASA Space Apps Challenge 2026 (Mendoza local event). Not an official NASA tool.",
@@ -645,14 +649,19 @@ with tabs[5]:
                 st.warning(T["n_rate"])
             elif res["errors"]:
                 st.warning(T["n_err"].format(e=res["errors"][0]))
+            st.caption(T["n_media"])
             for (yy, mm), arts in res["press"]:
+                raw_n = len(arts)
                 st.markdown(f"**{MONTHS[mm - 1]} {yy}**")
                 if not arts:
                     st.caption(T["n_empty"])
-                for a in arts[:10]:
+                arts = noticias.filtrar_medios(arts, ctrs)
+                if not arts and raw_n:
+                    st.caption(T["n_filtered"].format(n=raw_n))
+                for a in arts:
                     d = a["date"]
                     dd = f"{d[6:8]}/{d[4:6]}/{d[:4]}" if len(d) == 8 else ""
-                    st.markdown(f"- [{a['title'] or a['url']}]({a['url']})  \n  <small>{a['domain']} · {dd} · {a['lang']}</small>",
+                    st.markdown(f"- [{a['title'] or a['url']}]({a['url']})  \n  <small>{'📍 ' if a.get('origen') == 'local' else '🌐 '}{a['domain']} · {dd} · {a['lang']}</small>",
                                 unsafe_allow_html=True)
         with c2:
             st.subheader(T["n_wiki"])
