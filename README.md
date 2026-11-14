@@ -1,6 +1,6 @@
 # FireCal — Harmonized active-fire calendar (MODIS + VIIRS)
 
-Team project for the **NASA Space Apps Challenge 2026** (Mendoza local event), challenge
+Project by team **BurnInHell** for the **NASA Space Apps Challenge 2026** (Mendoza local event), challenge
 *Harmonization of MODIS and VIIRS Hot Spots*. Not an official NASA tool.
 
 FireCal harmonizes 25+ years of satellite active-fire hotspots over South America into one
