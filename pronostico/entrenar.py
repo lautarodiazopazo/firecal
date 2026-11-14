@@ -20,10 +20,18 @@ import json
 import os
 import time
 
-import lightgbm as lgb
+# En Mac, LightGBM y PyTorch traen cada uno su propia librería OpenMP; si se carga
+# LightGBM primero, importar PyTorch después puede colgarse. Por eso PyTorch va primero.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+try:
+    import torch  # noqa: F401
+except ImportError:
+    torch = None
+
+import lightgbm as lgb  # noqa: E402
 import matplotlib
-import numpy as np
-import pandas as pd
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
 from sklearn.metrics import brier_score_loss, roc_auc_score
 
 matplotlib.use("Agg")
@@ -53,8 +61,9 @@ def entrenar_lgb(tr, va, feats, nombre, out):
 
 
 def entrenar_mlp(tr, va, feats, out, epochs=40, dispositivo="auto"):
-    print("  mlp: cargando PyTorch…", flush=True)
-    import torch
+    print("  mlp: preparando la red…", flush=True)
+    if torch is None:
+        raise SystemExit("PyTorch no está instalado: pip install torch (o usá --sin-mlp)")
     from torch import nn
 
     if dispositivo == "auto":
