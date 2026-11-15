@@ -108,7 +108,7 @@ html, body, [class*="css"], .stApp, button, input, textarea, select {{ font-fami
 .stApp {{ background: radial-gradient(1200px 600px at 85% -10%, #0B3A9C 0%, rgba(7,23,63,0) 60%),
           linear-gradient(180deg, #0A2A78 0%, {NAVY} 420px); }}
 [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {{ display: none; }}
-.block-container {{ padding-top: 1.2rem; padding-bottom: 3rem; max-width: 1420px; }}
+.block-container {{ padding-top: 3.6rem; padding-bottom: 3rem; max-width: 1420px; }}
 h1, h2, h3, h4 {{ font-family: 'Fira Sans Condensed', 'Fira Sans', sans-serif; letter-spacing: .2px; }}
 [class*="st-key-card"] {{ background: {CARD}; border: 1.5px solid {BLUE}; border-radius: 14px; padding: 14px 16px 12px; }}
 .fc-ct {{ font-family: 'Fira Sans Condensed', sans-serif; font-weight: 700; font-size: 1.02rem; text-transform: uppercase;
@@ -130,7 +130,7 @@ h1, h2, h3, h4 {{ font-family: 'Fira Sans Condensed', 'Fira Sans', sans-serif; l
                 display: flex; align-items: center; justify-content: center; font-size: 1.35rem; }}
 .fc-step .tx {{ font-size: .93rem; line-height: 1.2; }}
 .fc-step .tx b {{ display: block; color: {YELLOW}; font-family: 'Fira Sans Condensed', sans-serif; font-size: .8rem; }}
-.fc-kpis {{ display: grid; grid-template-columns: 1fr; gap: 12px; }}
+.fc-kpis {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 12px; }}
 .fc-kpi {{ background: {CARD}; border: 1.5px solid {BLUE}; border-radius: 14px; padding: 14px 16px; }}
 .fc-kpi .l {{ font-size: .95rem; opacity: .92; }}
 .fc-kpi .v {{ font-family: 'Fira Sans Condensed', sans-serif; font-weight: 800; font-size: 2.1rem; line-height: 1.1; }}
@@ -148,6 +148,16 @@ h1, h2, h3, h4 {{ font-family: 'Fira Sans Condensed', 'Fira Sans', sans-serif; l
 [class*="st-key-row_"] [data-testid="stColumn"] {{ min-width: 0 !important; width: auto !important; flex: 1 1 auto; }}
 [class*="st-key-row_"] [data-testid="stColumn"]:last-child {{ flex: 0 0 auto; }}
 [class*="st-key-row_chips"] [data-testid="stColumn"], [class*="st-key-row_chips"] [data-testid="stColumn"]:last-child {{ flex: 1 1 0; }}
+.st-key-modebar button {{ min-height: 66px; border-radius: 16px !important; }}
+.st-key-modebar button p {{ font-size: 1.2rem !important; font-weight: 700; font-family: 'Fira Sans Condensed', sans-serif; }}
+.st-key-modebar {{ margin: 4px 0 14px; }}
+.st-key-btn_fc button[kind="secondary"], .st-key-btn_fc button[data-testid="stBaseButton-secondary"] {{
+    border: 2px solid {RED} !important; background: linear-gradient(90deg, rgba(228,55,0,.35), rgba(228,55,0,.12)) !important;
+    animation: fcpulse 2.2s ease-in-out infinite; }}
+@keyframes fcpulse {{ 0%,100% {{ box-shadow: 0 0 0 0 rgba(228,55,0,.55); }} 50% {{ box-shadow: 0 0 0 10px rgba(228,55,0,0); }} }}
+.st-key-ctrlbar {{ background: {CARD}; border: 1.5px solid {BLUE}; border-radius: 14px; padding: 8px 12px; }}
+.fc-tip {{ background: rgba(234,254,7,.12); border: 1px dashed {YELLOW}; border-radius: 10px; padding: 8px 12px; margin: 6px 0 4px;
+           font-size: .95rem; }}
 .fc-foot {{ font-size: .8rem; opacity: .75; margin-top: 30px; }}
 button[kind="primary"], button[data-testid="stBaseButton-primary"] {{ color: {NAVY} !important; font-weight: 700; }}
 [data-testid="stSegmentedControl"] button[aria-checked="true"], [data-testid="stBaseButton-segmented_controlActive"] {{
@@ -158,6 +168,8 @@ button[kind="primary"], button[data-testid="stBaseButton-primary"] {{ color: {NA
   .fc-steps {{ grid-template-columns: 1fr 1fr; gap: 8px; }}
   .fc-step {{ padding: 8px; }} .fc-step .ic {{ flex-basis: 34px; height: 34px; font-size: 1.05rem; }}
   .fc-kpis {{ grid-template-columns: 1fr 1fr; gap: 8px; }}
+  .block-container {{ padding-top: 3.2rem; }}
+  .st-key-modebar button p {{ font-size: 1.05rem !important; }}
   .fc-kpi .v {{ font-size: 1.45rem; }} .fc-kpi .l {{ font-size: .8rem; }}
 }}
 </style>
@@ -328,8 +340,9 @@ def style_fig(fig, h, **kw):
     fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                       font=dict(family="Fira Sans, sans-serif", color=WHITE, size=13), height=h,
                       **{"margin": dict(l=10, r=10, t=50, b=10), **kw})
-    fig.update_xaxes(gridcolor="rgba(255,255,255,.08)")
-    fig.update_yaxes(gridcolor="rgba(255,255,255,.08)")
+    fig.update_xaxes(gridcolor="rgba(255,255,255,.08)", fixedrange=True)
+    fig.update_yaxes(gridcolor="rgba(255,255,255,.08)", fixedrange=True)
+    fig.update_layout(dragmode=False)
     return fig
 
 
@@ -350,7 +363,7 @@ def card_title(num, text, help_md=None):
 
 
 def help_pop(md, label="?"):
-    with st.popover(label):
+    with st.popover(label, icon=":material/help:" if label != "?" else None):
         st.markdown(md)
 
 
@@ -374,6 +387,7 @@ def zip_bytes(name, df, desc, units):
 
 def set_zone(wkt, label, short):
     st.session_state.zone = {"wkt": wkt, "label": label, "short": short}
+    st.session_state.zone_toast = label
     st.session_state.pop("news_open", None)
 
 
@@ -396,7 +410,7 @@ if "zone" not in st.session_state:
 st.session_state.setdefault("map_v", 0)
 
 # ================================================================== 1. CABECERA
-h1, h2 = st.columns([10, 1], vertical_alignment="top")
+h1, h2 = st.columns([8, 2], vertical_alignment="top")
 with h1:
     st.markdown(f"""
 <div class="fc-hero">{LOGO.replace('{s}', '86')}
@@ -409,7 +423,7 @@ with h1:
                           'We turn <b>25 years of NASA satellite data</b> into a simple calendar: <b>when and where South America burns</b>, how this month compares and what to expect over the <b>next 3 months</b>.')}</div>
 """, unsafe_allow_html=True)
 with h2:
-    with st.popover("☰", width="stretch"):
+    with st.popover(tr("🌐 Idioma · Info", "🌐 Language · Info"), width="stretch"):
         lang = st.segmented_control(tr("Idioma", "Language"), ["Español", "English"],
                                     default="Español" if L == "es" else "English")
         if lang and (("es" if lang == "Español" else "en") != L):
@@ -431,7 +445,23 @@ st.markdown(f"""
 </div>""", unsafe_allow_html=True)
 
 # ================================================================== 3. PANEL PRINCIPAL
-colL, colM, colR = st.columns([1.15, 2.1, 1.05], gap="medium")
+st.session_state.setdefault("fc_mode", False)
+with st.container(key="modebar"):
+    mb1, mb2 = st.columns(2)
+    if mb1.button(tr("📅  Ver la historia · 2000–2026", "📅  See the history · 2000–2026"), key="btn_hist",
+                  type="secondary" if st.session_state.fc_mode else "primary", width="stretch"):
+        st.session_state.fc_mode = False
+        st.rerun()
+    if mb2.button(tr("🔮  Predecir los próximos 3 meses", "🔮  Forecast the next 3 months"), key="btn_fc",
+                  type="primary" if st.session_state.fc_mode else "secondary", width="stretch"):
+        st.session_state.fc_mode = True
+        st.rerun()
+colL, colM = st.columns([1.1, 3.2], gap="medium")
+with colM:
+    kpi_box = st.container()
+    ctrl_box = st.container(key="ctrlbar")
+    map_box = st.container()
+    cal_box = st.container()
 
 # ---------- 01 Área
 with colL:
@@ -486,22 +516,16 @@ with colL:
         st.markdown(f"<div class='fc-legend'>{tr('Zona', 'Area')}: <b>{st.session_state.zone['label']}</b></div>",
                     unsafe_allow_html=True)
 
-# ---------- 02 Modo
+# ---------- 02 Período
+FORECAST = bool(st.session_state.fc_mode) and PRON is not None
 with colL:
     with st.container(key="card_mode"):
-        card_title("02", tr("Modo: histórico / pronóstico", "Mode: history / outlook"),
-                   tr("**Ver histórico**: lo que vieron los satélites entre 2000 y hoy.\n\n"
-                      "**Predecir temporada**: un modelo de inteligencia artificial estima, para los próximos 3 meses, "
-                      "la probabilidad de que haya **más fuego que en un mes normal** en tu zona.",
-                      "**History**: what the satellites saw from 2000 to today.\n\n"
-                      "**Outlook**: a machine-learning model estimates, for the next 3 months, the chance of "
-                      "**more fire than in a normal month** in your area."))
-        modo_opts = [tr("Ver histórico (2000–2026)", "History (2000–2026)"), tr("Predecir temporada (+3 meses)", "Outlook (+3 months)")]
-        modo = st.segmented_control(tr("Modo", "Mode"), modo_opts, default=modo_opts[0], key="modo",
-                                    label_visibility="collapsed") or modo_opts[0]
-        FORECAST = modo == modo_opts[1] and PRON is not None
+        card_title("02", tr("Período", "Period"),
+                   tr("Elegí los **años** que querés ver. Todo (mapa, números y calendario) se actualiza solo.",
+                      "Choose the **years** to see. Everything (map, numbers, calendar) updates automatically."))
         years_all = list(range(DMIN.year, DMAX.year + 1))
-        y0, y1 = st.select_slider(tr("Años", "Years"), options=years_all, value=(years_all[0], years_all[-1]), key="yrs")
+        y0, y1 = st.select_slider(tr("Años", "Years"), options=years_all, value=(years_all[0], years_all[-1]), key="yrs",
+                                  label_visibility="collapsed")
         D0, D1 = max(dt.date(y0, 1, 1), DMIN), min(dt.date(y1, 12, 31), DMAX)
         if FORECAST:
             fmonths = PRON[["year", "month", "lead"]].drop_duplicates().sort_values("lead").values.tolist()
@@ -509,14 +533,28 @@ with colL:
                                         format_func=lambda i: f"{MONTHS[fmonths[i][1] - 1]} {fmonths[i][0]}",
                                         default=0, key="fsel") or 0
             FY, FM, FL = fmonths[fsel]
-        cmode = st.segmented_control(tr("Calendario", "Calendar"), [tr("Cantidad de focos", "Hotspot count"),
-                                                                    tr("Comparado con lo normal", "Vs. normal")],
-                                     default=tr("Cantidad de focos", "Hotspot count"), key="cmode") \
-            or tr("Cantidad de focos", "Hotspot count")
-        ANOM = cmode != tr("Cantidad de focos", "Hotspot count")
+    news_box = st.container(key="card_news")
+
+# ---------- barra de controles del mapa (cerca de lo que cambian)
+with ctrl_box:
+    cb1, cb2, cb3, cb4 = st.columns([2.6, 1.6, 0.55, 1.1], vertical_alignment="center")
+    cmode = cb1.segmented_control(tr("Ver", "Show"), [tr("Cantidad de focos", "Hotspot count"),
+                                                     tr("Comparado con lo normal", "Vs. normal")],
+                                  default=tr("Cantidad de focos", "Hotspot count"), key="cmode",
+                                  label_visibility="collapsed") or tr("Cantidad de focos", "Hotspot count")
+    ANOM = cmode != tr("Cantidad de focos", "Hotspot count")
+    if not FORECAST:
+        cb2.toggle(tr("🔥 Ver focos", "🔥 Show hotspots"), key="show_pts")
+    with cb3.popover("🎨", help=tr("Colores", "Colors")):
         ramp = st.selectbox(tr("Rampa de color", "Color ramp"), list(RAMPS), index=0, key="ramp",
-                            disabled=ANOM, help=tr("En «comparado con lo normal» siempre: azul = menos fuego, rojo = más fuego.",
-                                                   "In «vs. normal» mode always: blue = less fire, red = more fire."))
+                            help=tr("En «comparado con lo normal» siempre: azul = menos fuego, rojo = más fuego.",
+                                    "In «vs. normal» mode always: blue = less fire, red = more fire."))
+    if cb4.button("🗑 " + tr("Borrar zona", "Clear area"), width="stretch"):
+        st.session_state.map_v += 1
+        st.session_state.pop("last_draw", None)
+        set_zone(shapely.to_wkt(box(-82, -56, -34, 13)), tr("Sudamérica completa", "All of South America"), "")
+        st.rerun()
+ramp = st.session_state.get("ramp", "Firechron")
 
 # ---------- cálculos de la zona
 GEOM = shapely.from_wkt(st.session_state.zone["wkt"])
@@ -552,7 +590,7 @@ if FORECAST:
         return (float(p.prob.mean()), float(p.p_clim.mean())) if len(p) else (np.nan, np.nan)
 
 # ---------- MAPA
-with colM:
+with map_box:
     fmap = folium.Map(location=[-33, -66], zoom_start=4, tiles="OpenStreetMap", control_scale=True,
                       scrollWheelZoom=False, prefer_canvas=True)
     fmap.get_root().header.add_child(folium.Element(
@@ -614,27 +652,22 @@ with colM:
             st.session_state.last_draw = sig
             set_zone(shapely.to_wkt(shape(g), rounding_precision=4), tr("Zona dibujada", "Drawn area"), "")
             st.rerun()
-    lc1, lc2 = st.columns([3, 1], vertical_alignment="center")
+    lc1 = st.container()
+    lc1.markdown(f"<div class='fc-legend' style='color:{YELLOW}'>👇 {tr('Debajo: el calendario de 25 años, los gráficos y las descargas', 'Below: the 25-year calendar, charts and downloads')}</div>",
+                 unsafe_allow_html=True)
     if FORECAST:
         grad = "linear-gradient(90deg," + ",".join(c for _, c in PROB_RAMP) + ")"
         lc1.markdown(f"<div class='fc-legend'>{tr('Probabilidad de más fuego de lo normal', 'Chance of above-normal fire')}: "
                      f"0 %<span class='fc-sw' style='background:{grad}'></span>100 % · {tr('cuadros de ~50 km', '~50 km squares')}</div>",
                      unsafe_allow_html=True)
-    else:
-        lc1.toggle(tr("🔥 Mostrar focos en el mapa", "🔥 Show hotspots on the map"), key="show_pts")
-    if not FORECAST and st.session_state.get("show_pts", False):
+    elif st.session_state.get("show_pts", False):
         grad = "linear-gradient(90deg," + ",".join(c for _, c in FIRE_RAMP[1:]) + ")"
         lc1.markdown(f"<div class='fc-legend'>{tr('Cada punto = un área de ~11 km', 'Each dot = a ~11 km area')} · "
                      f"{tr('pocos', 'few')}<span class='fc-sw' style='background:{grad}'></span>{tr('muchos focos', 'many hotspots')} "
                      f"({D0.year}–{D1.year})</div>", unsafe_allow_html=True)
-    if lc2.button("🗑 " + tr("Borrar zona", "Clear area"), width="stretch"):
-        st.session_state.map_v += 1
-        st.session_state.pop("last_draw", None)
-        st.session_state.zone = {"wkt": shapely.to_wkt(box(-82, -56, -34, 13)), "label": tr("Sudamérica completa", "All of South America"), "short": ""}
-        st.rerun()
 
 # ---------- KPIs
-with colR:
+with kpi_box:
     if not HAS:
         st.info(tr("No hay focos registrados en esta zona.", "No hotspots recorded in this area."))
     elif FORECAST:
@@ -661,7 +694,7 @@ with colR:
                     "neighbors, climate (ERA5-Land) and El Niño/La Niña (ONI index).\n\n**How reliable?** Tested on "
                     "2023–2025 (unseen in training): right **~7 in 10** times at 1 month and **~2 in 3** at 3 months. "
                     "Using only «the usual» is right ~6 in 10.\n\nIt is **guidance** to prepare, not a certainty."),
-                 tr("? ¿Cómo leer esto?", "? How to read this"))
+                 tr("¿Cómo leer esto?", "How to read this?"))
     else:
         yr = mt.groupby("year").focos.sum()
         cmp_now = compare_month(daily, DMAX.year, DMAX.month, DMAX, REF)
@@ -681,7 +714,7 @@ with colR:
                     "**harmonized**: it counts the same whether an old (MODIS) or new (VIIRS) satellite saw it.\n\n"
                     "**Normal** = the **median** of 2003–2025: half the years had less, half had more.\n\n"
                     "**+34%** means 34% more hotspots than a normal year; **−20%**, 20% fewer."),
-                 tr("? ¿Qué significan estos números?", "? What do these numbers mean?"))
+                 tr("¿Qué significan estos números?", "What do these numbers mean?"))
     if small:
         st.caption(tr("Zona muy chica: se usan los cuadros de ~11 km que la tocan.", "Very small area: ~11 km cells touching it are used."))
 
@@ -710,7 +743,7 @@ def month_detail(y, m):
                              hovertemplate="%{x}: %{y:,.0f}<extra></extra>"))
         f.add_hline(y=C["med"], line_dash="dash", line_color=WHITE, annotation_text=tr("lo normal", "normal"))
         st.plotly_chart(style_fig(f, 240, title=tr(f"{MONTHS_L[m - 1].capitalize()} de cada año", f"{MONTHS_L[m - 1]} of each year"),
-                                  showlegend=False), width="stretch")
+                                  showlegend=False), width="stretch", config={"displayModeBar": False})
         st.markdown(f"#### 📰 {tr('Qué decía la prensa', 'What the press said')}")
         if not PLACES:
             st.caption(tr("No hay lugares para buscar.", "No places to search."))
@@ -738,9 +771,8 @@ def month_detail(y, m):
 
 
 # ================================================================== FILA 2: noticias + calendario
-colN, colC = st.columns([1.15, 3.15], gap="medium")
-with colN:
-    with st.container(key="card_news"):
+with news_box:
+    if True:
         card_title("03", tr("Noticias y contexto del lugar", "News and context"),
                    tr("Mostramos los **lugares** donde hubo más focos en tu zona y los **meses más fuera de lo normal**. "
                       "Tocá un mes (acá o en el calendario) para ver los números y las **noticias** de ese momento.",
@@ -756,7 +788,7 @@ with colN:
                 if cc[i].button(f"{MONTHS[int(r.month) - 1]} {int(r.year)}", key=f"chip{i}", width="stretch"):
                     month_detail(int(r.year), int(r.month))
 
-with colC:
+with cal_box:
     with st.container(key="card_cal"):
         if FORECAST:
             card_title("📈", tr("Pronóstico de los próximos 3 meses", "Next 3 months outlook"))
@@ -782,10 +814,13 @@ with colC:
                            "Each **row is a year**, each **column a month**. Color shows how much fire the satellites "
                            "detected: **dark blue = none/little**, **yellow → red = a lot**.\n\nIn **«Vs. normal»**: "
                            "**red** = more fire than a normal year for that month, **blue** = less.\n\nTap a square for details and news."))
+        st.markdown(f"<div class='fc-tip'>👆 <b>{tr('Tocá cualquier cuadrito', 'Tap any square')}</b> "
+                    f"{tr('para ver los números de ese mes, si fue normal y las noticias de ese momento.', 'to see that month’s numbers, whether it was normal, and the news from then.')}</div>",
+                    unsafe_allow_html=True)
         if not HAS or not len(mt):
             st.info(tr("No hay focos en esta zona y período.", "No hotspots in this area and period."))
         else:
-            years = sorted(mt.year.unique(), reverse=True)
+            years = sorted(mt.year.unique())  # de arriba hacia abajo: del más viejo al más nuevo
             ylab = [str(y) for y in years]
             piv = lambda col: mt.pivot(index="year", columns="month", values=col).reindex(index=years, columns=range(1, 13))
             Z, MED, AN, PART, SRC = piv("focos"), piv("median"), piv("anom"), piv("partial"), piv("source")
@@ -811,7 +846,8 @@ with colC:
                 zcap = max(float(np.nanpercentile(base, 98)), 1.0)
                 zv = np.sqrt(np.clip(Z.values, 0, zcap))
                 nice = [0, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000]
-                ticks = [v for v in nice if v <= zcap][:: max(1, len([v for v in nice if v <= zcap]) // 5)]
+                ok_t = [v for v in nice if v <= zcap * 0.6]
+                ticks = ok_t[:: max(1, len(ok_t) // 3)][:4]
                 hm = go.Heatmap(z=zv, x=MONTHS, y=ylab, colorscale=RAMPS[ramp], zmin=0, zmax=np.sqrt(zcap), xgap=2, ygap=2,
                                 hoverinfo="skip",
                                 colorbar=dict(title=tr("focos", "hotspots"), tickvals=[np.sqrt(v) for v in ticks] + [np.sqrt(zcap)],
@@ -832,7 +868,7 @@ with colC:
                              showlegend=False)
             fig = go.Figure([hm, hit])
             fig.update_yaxes(type="category", autorange="reversed", fixedrange=True)
-            fig.update_xaxes(side="top", fixedrange=True, type="category")
+            fig.update_xaxes(side="top", fixedrange=True, type="category", tickangle=0, tickfont=dict(size=11))
             style_fig(fig, max(320, 22 * len(years) + 150), clickmode="event+select", dragmode=False,
                       margin=dict(l=6, r=6, t=30, b=40), hoverlabel=dict(bgcolor=NAVY, bordercolor=YELLOW))
             ev = st.plotly_chart(fig, width="stretch", on_select="rerun", selection_mode="points",
@@ -888,7 +924,7 @@ if HAS:
         f2.add_trace(go.Scatter(x=cur.index, y=cur.values, line=dict(color=YELLOW, width=3), name=f"{MONTHS[m - 1]} {y}"))
         st.plotly_chart(style_fig(f2, 380, title=tr("Focos acumulados día a día", "Cumulative hotspots day by day"),
                                   xaxis_title=tr("Día del mes", "Day of month"), hovermode="x unified",
-                                  legend=dict(orientation="h", y=-0.2)), width="stretch")
+                                  legend=dict(orientation="h", y=-0.2)), width="stretch", config={"displayModeBar": False})
 
     with tabs[1]:
         ref_m = full[(full.year >= REF[0]) & (full.year <= REF[1])]
@@ -901,7 +937,7 @@ if HAS:
         hs = full[full.year == hy].set_index("month").focos.reindex(range(1, 13))
         f4.add_trace(go.Scatter(x=MONTHS, y=hs.values, line=dict(color=YELLOW, width=2), mode="lines+markers", name=str(hy)))
         st.plotly_chart(style_fig(f4, 400, title=tr("¿En qué meses se quema esta zona?", "When does this area burn?"),
-                                  hovermode="x unified", legend=dict(orientation="h", y=-0.15)), width="stretch")
+                                  hovermode="x unified", legend=dict(orientation="h", y=-0.15)), width="stretch", config={"displayModeBar": False})
 
     with tabs[2]:
         ya = mt.groupby("year").agg(focos=("focos", "sum"), ndays=("ndays", "sum")).reset_index()
@@ -910,8 +946,7 @@ if HAS:
                               customdata=np.where(ya.full, "", tr(" (año incompleto)", " (incomplete year)")),
                               hovertemplate="%{x}: %{y:,.0f}%{customdata}<extra></extra>"))
         f5.add_hline(y=ya[ya.full].focos.median(), line_dash="dash", line_color=WHITE, annotation_text=tr("año normal", "normal year"))
-        st.plotly_chart(style_fig(f5, 400, title=tr("Total de focos por año", "Total hotspots per year"), showlegend=False),
-                        width="stretch")
+        st.plotly_chart(style_fig(f5, 400, title=tr("Total de focos por año", "Total hotspots per year"), showlegend=False), width="stretch", config={"displayModeBar": False})
         st.caption(tr("Las barras grises son años incompletos (2000 empieza en noviembre; 2026 llega hasta "
                       f"{DMAX:%d/%m}).", f"Grey bars are incomplete years (2000 starts in November; 2026 runs to {DMAX:%m/%d})."))
 
@@ -941,7 +976,7 @@ if HAS:
                                 name=tr("Firechron (armonizado)", "Firechron (harmonized)")))
         f7.add_vline(x=2012, line_dash="dot", line_color=WHITE, annotation_text="MODIS → VIIRS")
         st.plotly_chart(style_fig(f7, 360, title=tr("Antes y después de armonizar (esta zona)", "Before and after harmonizing (this area)"),
-                                  legend=dict(orientation="h", y=-0.2)), width="stretch")
+                                  legend=dict(orientation="h", y=-0.2)), width="stretch", config={"displayModeBar": False})
 
 with tabs[4]:
     st.markdown(tr("¿Viste humo o fuego? **Contanos dónde y cuándo.** Firechron cruza tu reporte con lo que detectaron "
@@ -1085,6 +1120,10 @@ with tabs[6]:
 **License:** MIT code. Firechron is a project by team **BurnInHell** for the NASA Space Apps Challenge 2026 (Mendoza). **Not an official NASA tool** nor endorsed by NASA.
 """))
 
+if st.session_state.pop("zone_toast", None) and "toasted_once" in st.session_state:
+    st.toast(tr(f"Zona actualizada: {st.session_state.zone['label']}. Bajá para ver el calendario 👇",
+                f"Area updated: {st.session_state.zone['label']}. Scroll down for the calendar 👇"), icon="📍")
+st.session_state.toasted_once = True
 st.markdown(f"<div class='fc-foot'>Firechron · {tr('Equipo', 'Team')} BurnInHell · NASA Space Apps Challenge 2026 · "
             f"{tr('Datos', 'Data')}: NASA FIRMS (MODIS + VIIRS) · {tr('No es una herramienta oficial de NASA.', 'Not an official NASA tool.')}"
             f"<br>{ACK}</div>", unsafe_allow_html=True)
