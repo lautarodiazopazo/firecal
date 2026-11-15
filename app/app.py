@@ -149,7 +149,8 @@ h1, h2, h3, h4 {{ font-family: 'Fira Sans Condensed', 'Fira Sans', sans-serif; l
 .fc-step {{ background: {CARD}; border: 1px solid {BORDER}; border-radius: 10px; padding: 12px;
             display: flex; gap: 10px; align-items: center; }}
 .fc-step .ic {{ flex: 0 0 44px; height: 44px; border-radius: 50%; background: {YELLOW}; color: {NAVY};
-                display: flex; align-items: center; justify-content: center; font-size: 1.35rem; }}
+                display: flex; align-items: center; justify-content: center; font-size: 1.4rem; font-weight: 800;
+                font-family: 'Fira Sans Condensed', sans-serif; }}
 .fc-step .tx {{ font-size: .93rem; line-height: 1.2; }}
 .fc-step .tx b {{ display: block; color: {YELLOW}; font-family: 'Fira Sans Condensed', sans-serif; font-size: .8rem; }}
 .fc-kpis {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 12px; }}
@@ -479,10 +480,10 @@ with h2:
 # ================================================================== 2. INSTRUCTIVO
 st.markdown(f"""
 <div class="fc-steps">
- <div class="fc-step"><div class="ic">📍</div><div class="tx"><b>{tr('PASO 1', 'STEP 1')}</b>{tr('Buscá un lugar o dibujá una zona', 'Search a place or draw an area')}</div></div>
- <div class="fc-step"><div class="ic">🕐</div><div class="tx"><b>{tr('PASO 2', 'STEP 2')}</b>{tr('Elegí: ver la historia o el pronóstico', 'Choose: history or outlook')}</div></div>
- <div class="fc-step"><div class="ic">👆</div><div class="tx"><b>{tr('PASO 3', 'STEP 3')}</b>{tr('Tocá un mes del calendario: datos y noticias', 'Tap a month: numbers and news')}</div></div>
- <div class="fc-step"><div class="ic">⬇️</div><div class="tx"><b>{tr('PASO 4', 'STEP 4')}</b>{tr('Descargá los datos en CSV', 'Download the data as CSV')}</div></div>
+ <div class="fc-step"><div class="ic">1</div><div class="tx">{tr('Buscá un lugar o dibujá una zona', 'Search a place or draw an area')}</div></div>
+ <div class="fc-step"><div class="ic">2</div><div class="tx">{tr('Elegí: ver la historia o el pronóstico', 'Choose: history or outlook')}</div></div>
+ <div class="fc-step"><div class="ic">3</div><div class="tx">{tr('Tocá un mes del calendario: datos y noticias', 'Tap a month: numbers and news')}</div></div>
+ <div class="fc-step"><div class="ic">4</div><div class="tx">{tr('Descargá los datos en CSV', 'Download the data as CSV')}</div></div>
 </div>""", unsafe_allow_html=True)
 
 # ================================================================== 3. PANEL PRINCIPAL
@@ -696,7 +697,7 @@ with map_box:
             set_zone(shapely.to_wkt(shape(g), rounding_precision=4), tr("Zona dibujada", "Drawn area"), "")
             st.rerun()
     lc1 = st.container()
-    lc1.markdown(f"<div class='fc-legend' style='color:{YELLOW}'>👇 {tr('Debajo: el calendario de 25 años, los gráficos y las descargas', 'Below: the 25-year calendar, charts and downloads')}</div>",
+    lc1.markdown(f"<div class='fc-legend' style='color:{YELLOW}'>{tr('Debajo: el calendario de 25 años, los gráficos y las descargas', 'Below: the 25-year calendar, charts and downloads')}</div>",
                  unsafe_allow_html=True)
     if FORECAST:
         grad = "linear-gradient(90deg," + ",".join(c for _, c in PROB_RAMP) + ")"
@@ -857,13 +858,13 @@ with cal_box:
                            "Each **row is a year**, each **column a month**. Color shows how much fire the satellites "
                            "detected: **dark blue = none/little**, **yellow → red = a lot**.\n\nIn **«Vs. normal»**: "
                            "**red** = more fire than a normal year for that month, **blue** = less.\n\nTap a square for details and news."))
-        st.markdown(f"<div class='fc-tip'>👆 <b>{tr('Tocá cualquier cuadrito', 'Tap any square')}</b> "
+        st.markdown(f"<div class='fc-tip'><b>{tr('Tocá cualquier cuadrito', 'Tap any square')}</b> "
                     f"{tr('para ver los números de ese mes, si fue normal y las noticias de ese momento.', 'to see that month’s numbers, whether it was normal, and the news from then.')}</div>",
                     unsafe_allow_html=True)
         if not HAS or not len(mt):
             st.info(tr("No hay focos en esta zona y período.", "No hotspots in this area and period."))
         else:
-            years = sorted(mt.year.unique())  # de arriba hacia abajo: del más viejo al más nuevo
+            years = sorted(mt.year.unique())  # eje x: años de izquierda a derecha; eje y: meses de abajo (ene) hacia arriba (dic)
             ylab = [str(y) for y in years]
             piv = lambda col: mt.pivot(index="year", columns="month", values=col).reindex(index=years, columns=range(1, 13))
             Z, MED, AN, PART, SRC = piv("focos"), piv("median"), piv("anom"), piv("partial"), piv("source")
@@ -891,29 +892,32 @@ with cal_box:
                 nice = [0, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000]
                 ok_t = [v for v in nice if v <= zcap * 0.6]
                 ticks = ok_t[:: max(1, len(ok_t) // 3)][:4]
-                hm = go.Heatmap(z=zv, x=MONTHS, y=ylab, colorscale=RAMPS[ramp], zmin=0, zmax=np.sqrt(zcap), xgap=2, ygap=2,
+                hm = go.Heatmap(z=zv.T, x=ylab, y=MONTHS, colorscale=RAMPS[ramp], zmin=0, zmax=np.sqrt(zcap), xgap=2, ygap=2,
                                 hoverinfo="skip",
                                 colorbar=dict(title=tr("focos", "hotspots"), tickvals=[np.sqrt(v) for v in ticks] + [np.sqrt(zcap)],
-                                              ticktext=[fmt(v) for v in ticks] + ["≥" + fmt(zcap)], orientation="h", y=-0.02,
+                                              ticktext=[fmt(v) for v in ticks] + ["≥" + fmt(zcap)], orientation="h", y=-0.16,
                                               yanchor="top", thickness=10, len=0.8))
             else:
                 lim = max(100, np.nanpercentile(np.abs(AN.values), 95) if np.isfinite(AN.values).any() else 100)
-                hm = go.Heatmap(z=np.clip(AN.values, -100, lim), x=MONTHS, y=ylab, colorscale=ANOM_RAMP, zmin=-100,
+                hm = go.Heatmap(z=np.clip(AN.values, -100, lim).T, x=ylab, y=MONTHS, colorscale=ANOM_RAMP, zmin=-100,
                                 zmax=lim, xgap=2, ygap=2, hoverinfo="skip",
-                                colorbar=dict(title=tr("vs. lo normal (%)", "vs. normal (%)"), orientation="h", y=-0.02,
+                                colorbar=dict(title=tr("vs. lo normal (%)", "vs. normal (%)"), orientation="h", y=-0.16,
                                               yanchor="top", thickness=10, len=0.7, ticksuffix=" %"))
             # capa invisible para poder tocar los cuadritos
-            gx, gy = np.meshgrid(MONTHS, ylab)
-            ok = ~np.isnan(Z.values)
-            hit = go.Scatter(x=gx[ok], y=gy[ok], mode="markers", text=txt[ok], hovertemplate="%{text}<extra></extra>",
-                             marker=dict(symbol="square", size=26, color="rgba(0,0,0,0)", opacity=0.01),
+            gx, gy = np.meshgrid(ylab, MONTHS)
+            ok = ~np.isnan(Z.values.T)
+            hit = go.Scatter(x=gx[ok], y=gy[ok], mode="markers", text=txt.T[ok], hovertemplate="%{text}<extra></extra>",
+                             marker=dict(symbol="square", size=18, color="rgba(0,0,0,0)", opacity=0.01),
                              selected=dict(marker=dict(opacity=0.01)), unselected=dict(marker=dict(opacity=0.01)),
                              showlegend=False)
             fig = go.Figure([hm, hit])
-            fig.update_yaxes(type="category", autorange="reversed", fixedrange=True)
-            fig.update_xaxes(side="top", fixedrange=True, type="category", tickangle=0, tickfont=dict(size=11))
-            style_fig(fig, max(320, 22 * len(years) + 150), clickmode="event+select", dragmode=False,
-                      margin=dict(l=6, r=6, t=30, b=40), hoverlabel=dict(bgcolor=NAVY, bordercolor=YELLOW))
+            fig.update_yaxes(type="category", categoryorder="array", categoryarray=MONTHS, fixedrange=True,
+                             tickfont=dict(size=11))
+            xt = [str(y) for y in years if y % 5 == 0 or (y == years[0] and y % 5 <= 2) or (y == years[-1] and y % 5 >= 3)]
+            fig.update_xaxes(side="bottom", fixedrange=True, type="category", categoryorder="array", categoryarray=ylab,
+                             tickangle=0, tickvals=xt, tickfont=dict(size=11))
+            style_fig(fig, 500, clickmode="event+select", dragmode=False,
+                      margin=dict(l=6, r=6, t=10, b=70), hoverlabel=dict(bgcolor=NAVY, bordercolor=YELLOW))
             ev = st.plotly_chart(fig, width="stretch", on_select="rerun", selection_mode="points",
                                  key=f"cal_{st.session_state.map_v}",
                                  config={"displayModeBar": False, "toImageButtonOptions": {"filename": "firechron_calendario"}})
@@ -921,7 +925,7 @@ with cal_box:
             if pts:
                 p0 = pts[0]
                 try:
-                    sel = (int(p0["y"]), MONTHS.index(p0["x"]) + 1)
+                    sel = (int(p0["x"]), MONTHS.index(p0["y"]) + 1)
                 except (KeyError, ValueError):
                     sel = None
                 if sel and st.session_state.get("cal_sel") != sel:
@@ -1164,8 +1168,8 @@ with tabs[6]:
 """))
 
 if st.session_state.pop("zone_toast", None) and "toasted_once" in st.session_state:
-    st.toast(tr(f"Zona actualizada: {st.session_state.zone['label']}. Bajá para ver el calendario 👇",
-                f"Area updated: {st.session_state.zone['label']}. Scroll down for the calendar 👇"), icon="📍")
+    st.toast(tr(f"Zona actualizada: {st.session_state.zone['label']}. Bajá para ver el calendario.",
+                f"Area updated: {st.session_state.zone['label']}. Scroll down for the calendar."))
 st.session_state.toasted_once = True
 st.markdown(f"<div class='fc-foot'>Firechron · {tr('Equipo', 'Team')} BurnInHell · NASA Space Apps Challenge 2026 · "
             f"{tr('Datos', 'Data')}: NASA FIRMS (MODIS + VIIRS) · {tr('No es una herramienta oficial de NASA.', 'Not an official NASA tool.')}"
