@@ -358,7 +358,7 @@ def card_title(num, text, help_md=None):
     c1, c2 = st.container(key=f"row_t{abs(hash(num)) % 10**6}").columns([7, 1], vertical_alignment="center")
     c1.markdown(f'<div class="fc-ct"><b>{num}</b>{text}</div>', unsafe_allow_html=True)
     if help_md:
-        with c2.popover("?", help=tr("¿Qué es esto?", "What is this?")):
+        with c2.popover(tr("Info", "Info"), help=tr("¿Qué es esto?", "What is this?")):
             st.markdown(help_md)
 
 
@@ -423,7 +423,7 @@ with h1:
                           'We turn <b>25 years of NASA satellite data</b> into a simple calendar: <b>when and where South America burns</b>, how this month compares and what to expect over the <b>next 3 months</b>.')}</div>
 """, unsafe_allow_html=True)
 with h2:
-    with st.popover(tr("🌐 Idioma · Info", "🌐 Language · Info"), width="stretch"):
+    with st.popover(tr("Idioma · Info", "Language · Info"), width="stretch"):
         lang = st.segmented_control(tr("Idioma", "Language"), ["Español", "English"],
                                     default="Español" if L == "es" else "English")
         if lang and (("es" if lang == "Español" else "en") != L):
@@ -450,11 +450,11 @@ with st.container(key="modebar"):
     mb1, mb2 = st.columns(2)
     _ya, _yb = st.session_state.get("yrs", (DMIN.year, DMAX.year))
     _per = f"{_ya}–{_yb}" if _ya != _yb else f"{_ya}"
-    if mb1.button(tr(f"📅  Ver la historia · {_per}", f"📅  See the history · {_per}"), key="btn_hist",
+    if mb1.button(tr(f"Ver la historia · {_per}", f"See the history · {_per}"), key="btn_hist",
                   type="secondary" if st.session_state.fc_mode else "primary", width="stretch"):
         st.session_state.fc_mode = False
         st.rerun()
-    if mb2.button(tr("🔮  Predecir los próximos 3 meses", "🔮  Forecast the next 3 months"), key="btn_fc",
+    if mb2.button(tr("Predecir los próximos 3 meses", "Forecast the next 3 months"), key="btn_fc",
                   type="primary" if st.session_state.fc_mode else "secondary", width="stretch"):
         st.session_state.fc_mode = True
         st.rerun()
@@ -489,9 +489,9 @@ with colL:
                     st.session_state.applied_q = (q, pick)
                     set_zone(res[pick][1], res[pick][0], res[pick][2])
         how = st.segmented_control(tr("Otras formas", "Other ways"),
-                                   [tr("📍 Dibujar en mapa", "📍 Draw on map"), tr("Coordenadas", "Coordinates"),
+                                   [tr("Dibujar en mapa", "Draw on map"), tr("Coordenadas", "Coordinates"),
                                     tr("Ejemplos", "Examples")], label_visibility="collapsed", key="how")
-        if how == tr("📍 Dibujar en mapa", "📍 Draw on map"):
+        if how == tr("Dibujar en mapa", "Draw on map"):
             st.caption(tr("Usá ▭ (rectángulo) o ⬠ (polígono) arriba a la izquierda del mapa.",
                           "Use ▭ (rectangle) or ⬠ (polygon) at the top-left of the map."))
         elif how == tr("Coordenadas", "Coordinates"):
@@ -539,19 +539,19 @@ with colL:
 
 # ---------- barra de controles del mapa (cerca de lo que cambian)
 with ctrl_box:
-    cb1, cb2, cb3, cb4 = st.columns([2.6, 1.6, 0.55, 1.1], vertical_alignment="center")
+    cb1, cb2, cb3, cb4 = st.columns([2.6, 1.3, 1.0, 1.1], vertical_alignment="center")
     cmode = cb1.segmented_control(tr("Ver", "Show"), [tr("Cantidad de focos", "Hotspot count"),
                                                      tr("Comparado con lo normal", "Vs. normal")],
                                   default=tr("Cantidad de focos", "Hotspot count"), key="cmode",
                                   label_visibility="collapsed") or tr("Cantidad de focos", "Hotspot count")
     ANOM = cmode != tr("Cantidad de focos", "Hotspot count")
     if not FORECAST:
-        cb2.toggle(tr("🔥 Ver focos", "🔥 Show hotspots"), key="show_pts")
-    with cb3.popover("🎨", help=tr("Colores", "Colors")):
+        cb2.toggle(tr("Ver focos", "Show hotspots"), key="show_pts")
+    with cb3.popover(tr("Colores", "Colors")):
         ramp = st.selectbox(tr("Rampa de color", "Color ramp"), list(RAMPS), index=0, key="ramp",
                             help=tr("En «comparado con lo normal» siempre: azul = menos fuego, rojo = más fuego.",
                                     "In «vs. normal» mode always: blue = less fire, red = more fire."))
-    if cb4.button("🗑 " + tr("Borrar zona", "Clear area"), width="stretch"):
+    if cb4.button(tr("Borrar zona", "Clear area"), width="stretch"):
         st.session_state.map_v += 1
         st.session_state.pop("last_draw", None)
         set_zone(shapely.to_wkt(box(-82, -56, -34, 13)), tr("Sudamérica completa", "All of South America"), "")
@@ -808,7 +808,7 @@ with cal_box:
         t1, t2 = st.container(key="row_tcal").columns([7, 1], vertical_alignment="center")
         t1.markdown(f'<div class="fc-ct">{tr("Calendario histórico", "History calendar")} · '
                     f'<span style="color:{YELLOW}">{tr("tocá un mes", "tap a month")}</span></div>', unsafe_allow_html=True)
-        with t2.popover("?"):
+        with t2.popover(tr("Info", "Info")):
             st.markdown(tr("Cada **fila es un año** y cada **columna un mes**. El color muestra cuánto fuego detectaron los "
                            "satélites: **azul oscuro = nada o poco**, **amarillo → rojo = mucho**.\n\n"
                            "En **«Comparado con lo normal»**: **rojo** = más fuego que en un año normal para ese mes, "
@@ -897,10 +897,10 @@ with cal_box:
 # ================================================================== 4. MÁS DETALLE
 st.write("")
 st.markdown(f"### {tr('Explorá más', 'Explore more')}")
-tabs = st.tabs([tr("📍 Este mes vs. otros años", "📍 This month vs. other years"), tr("📈 Temporada típica", "📈 Typical season"),
-                tr("📊 Año por año", "📊 Year by year"), tr("🛰️ Cómo funciona", "🛰️ How it works"),
-                tr("📣 Reportá un fuego", "📣 Report a fire"), tr("⬇️ Descargas", "⬇️ Downloads"),
-                tr("📚 Fuentes y créditos", "📚 Sources and credits")])
+tabs = st.tabs([tr("Este mes vs. otros años", "This month vs. other years"), tr("Temporada típica", "Typical season"),
+                tr("Año por año", "Year by year"), tr("Cómo funciona", "How it works"),
+                tr("Reportá un fuego", "Report a fire"), tr("Descargas", "Downloads"),
+                tr("Fuentes y créditos", "Sources and credits")])
 
 if HAS:
     with tabs[0]:
@@ -1052,7 +1052,7 @@ with tabs[5]:
         out_m = mt[["year", "month", "focos", "median", "anom", "partial"]].rename(columns={
             "focos": "focos_armonizados", "median": f"mediana_{REF[0]}_{REF[1]}", "anom": "anomalia_pct",
             "partial": "mes_incompleto"})
-        st.download_button("⬇️ " + tr("Calendario mensual (CSV)", "Monthly calendar (CSV)"),
+        st.download_button(tr("Calendario mensual (CSV)", "Monthly calendar (CSV)"),
                            zip_bytes(f"firechron_mensual_{tag}", out_m.round(2), desc_zone, units),
                            file_name=f"firechron_mensual_{tag}.zip", mime="application/zip", type="primary")
         if st.button(tr("Preparar focos diarios por cuadro de ~11 km", "Prepare daily hotspots per ~11 km cell"), key="p_daily"):
@@ -1062,10 +1062,10 @@ with tabs[5]:
                                ).sort_values(["fecha", "lat", "lon"])
             st.session_state["z_daily"] = zip_bytes(f"firechron_diario_0p1_{tag}", dfc, desc_zone, units)
         if "z_daily" in st.session_state:
-            st.download_button("⬇️ " + tr("Focos diarios (CSV)", "Daily hotspots (CSV)"), st.session_state["z_daily"],
+            st.download_button(tr("Focos diarios (CSV)", "Daily hotspots (CSV)"), st.session_state["z_daily"],
                                file_name=f"firechron_diario_0p1_{tag}.zip", mime="application/zip", key="d_daily")
         if pz_ok := (FORECAST and len(pz)):
-            st.download_button("⬇️ " + tr("Pronóstico de la zona (CSV)", "Area outlook (CSV)"),
+            st.download_button(tr("Pronóstico de la zona (CSV)", "Area outlook (CSV)"),
                                zip_bytes(f"firechron_pronostico_{FY}{FM:02d}",
                                          pz[["lat", "lon", "year", "month", "lead", "prob", "p_clim"]].round(4), desc_zone,
                                          "prob = probability that the month has more hotspots than the 2003-2019 median for that month and 0.5° cell"),
@@ -1082,7 +1082,7 @@ with tabs[5]:
             else:
                 st.warning(tr("Demasiados datos: achicá la zona o el período.", "Too much data: reduce area or period."))
         if "z_1km" in st.session_state:
-            st.download_button("⬇️ 1 km (CSV)", st.session_state["z_1km"], file_name=f"firechron_1km_{tag}.zip",
+            st.download_button("1 km (CSV)", st.session_state["z_1km"], file_name=f"firechron_1km_{tag}.zip",
                                mime="application/zip", key="d_1km")
 
 with tabs[6]:
