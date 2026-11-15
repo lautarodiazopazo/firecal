@@ -2,7 +2,8 @@
 Búsqueda de noticias y eventos de incendios para una zona y período.
 
 Fuentes (abiertas, sin clave):
-  * GDELT DOC 2.0 API — prensa mundial, desde 2017. Límite: 1 consulta cada 5 s.
+  * Google News (feed RSS público de búsqueda) — prensa, cualquier año (más denso desde ~2010).
+  * GDELT DOC 2.0 API — respaldo, prensa mundial desde 2017. Límite: 1 consulta cada 5 s.
   * Wikipedia (MediaWiki API) — eventos destacados, cualquier año.
 Lugares: Natural Earth admin-1 (dominio público), simplificado a Sudamérica.
 
@@ -24,7 +25,7 @@ from shapely.geometry import shape
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 ADMIN1 = os.path.join(APP_DIR, "data", "sa_admin1.geojson")
 CACHE = os.path.join(APP_DIR, "data", "cache_noticias.json")
-UA = {"User-Agent": "FireCal/0.1 (NASA Space Apps 2026 team project; github.com/lautarodiazopazo/firecal)"}
+UA = {"User-Agent": "Firechron/1.0 (NASA Space Apps 2026 team project; github.com/lautarodiazopazo/firecal)"}
 GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 GDELT_START = dt.date(2017, 1, 1)
 
@@ -268,3 +269,124 @@ def wiki_events(provs, countries, y0, y1, max_items=12):
             out.append(a)
     out.sort(key=lambda a: (-a["year"], a["title"]))
     return out[:max_items]
+
+
+# ------------------------------------------------------------------ Google News (RSS público)
+GN_LOCALE = {"Argentina": ("es-419", "AR"), "Chile": ("es-419", "CL"), "Uruguay": ("es-419", "UY"),
+             "Paraguay": ("es-419", "PY"), "Bolivia": ("es-419", "BO"), "Peru": ("es-419", "PE"),
+             "Colombia": ("es-419", "CO"), "Venezuela": ("es-419", "VE"), "Ecuador": ("es-419", "EC"),
+             "Brazil": ("pt-BR", "BR")}
+
+
+def google_news(places, countries, d0, d1, extra="", maximo=8):
+    """Titulares de Google News sobre incendios en esos lugares entre d0 y d1. Devuelve (artículos, error)."""
+    import email.utils
+    import xml.etree.ElementTree as ET
+    names = []
+    for p in places:
+        if p and p not in names:
+            names.append(p)
+    names = names[:4]
+    c = countries[0] if countries else "Argentina"
+    hl, gl = GN_LOCALE.get(c, ("es-419", "AR"))
+    fire = '(queimada OR incêndio OR incendio OR fogo)' if c == "Brazil" else '(incendio OR incendios OR "incendio forestal" OR fuego)'
+    loc = " OR ".join(f'"{n}"' for n in names)
+    q = f"{fire} ({loc})" if loc else fire
+    if extra.strip():
+        q += " " + extra.strip()
+    q += f" after:{d0:%Y-%m-%d} before:{(d1 + dt.timedelta(days=1)):%Y-%m-%d}"
+    key = f"gnews|{q}|{hl}|{gl}"
+    hit = _cache_get(key, max_age_h=24)
+    if hit is not None:
+        return hit, None
+    try:
+        r = requests.get("https://news.google.com/rss/search",
+                         params={"q": q, "hl": hl, "gl": gl, "ceid": f"{gl}:{hl}"}, headers=UA, timeout=12)
+        r.raise_for_status()
+        root = ET.fromstring(r.content)
+    except Exception as e:  # noqa: BLE001
+        return [], str(e)[:120]
+    locales = [d for cc in countries for d in MEDIOS.get(cc, [])]
+    seen, loc_a, otros = set(), [], []
+    for it in root.iter("item"):
+        title = (it.findtext("title") or "").strip()
+        src = it.find("source")
+        src_name = (src.text or "").strip() if src is not None else ""
+        src_url = src.get("url", "") if src is not None else ""
+        if src_name and title.endswith(" - " + src_name):
+            title = title[: -len(src_name) - 3]
+        if not TITLE_FIRE.search(title):
+            continue
+        k = re.sub(r"\W+", " ", _plain(title).lower()).strip()[:80]
+        if k in seen:
+            continue
+        seen.add(k)
+        try:
+            pd_ = email.utils.parsedate_to_datetime(it.findtext("pubDate") or "")
+            date = pd_.strftime("%Y%m%d")
+        except Exception:  # noqa: BLE001
+            date = ""
+        domain = re.sub(r"^https?://(www\.)?", "", src_url).split("/")[0]
+        a = {"title": title, "url": it.findtext("link"), "domain": src_name or domain, "date": date,
+             "origen": "local" if _dom_ok(domain, locales) else "otro"}
+        (loc_a if a["origen"] == "local" else otros).append(a)
+    out = (loc_a + otros)[:maximo]
+    _cache_put(key, out)
+    return out, None
+
+
+# ------------------------------------------------------------------ buscador de lugares
+# Respaldo sin internet: algunos lugares con incendios conocidos (rectángulos aproximados).
+GAZ = {
+    "Luján de Cuyo, Mendoza": (-33.60, -32.90, -69.75, -68.75),
+    "Cerro Arco, Las Heras, Mendoza": (-32.92, -32.80, -69.00, -68.86),
+    "Cacheuta, Luján de Cuyo, Mendoza": (-33.08, -32.98, -69.17, -69.05),
+    "General Alvear, Mendoza": (-35.80, -34.60, -67.95, -66.50),
+    "San Rafael, Mendoza": (-36.00, -34.20, -69.60, -67.30),
+    "Ciudad de Mendoza": (-32.95, -32.83, -68.90, -68.80),
+    "Sierras de Córdoba": (-33.50, -29.50, -65.50, -63.80),
+    "Delta del Paraná": (-34.40, -32.00, -60.80, -58.30),
+    "Corrientes (Esteros del Iberá)": (-29.20, -27.40, -58.20, -56.40),
+    "Bariloche, Río Negro": (-41.40, -40.90, -71.70, -71.00),
+    "Pantanal": (-20.50, -15.50, -58.50, -54.50),
+    "Amazonía (arco de deforestación)": (-12.00, -7.00, -66.00, -52.00),
+    "Chiquitanía, Bolivia": (-19.00, -15.00, -62.50, -57.50),
+    "Valparaíso / Viña del Mar, Chile": (-33.20, -32.90, -71.65, -71.35),
+}
+SA_CODES = "ar,cl,uy,py,bo,br,pe,ec,co,ve,gy,sr,gf"
+
+
+def buscar_lugar(q, lang="es", limit=5):
+    """Busca un lugar por nombre. Devuelve lista de (etiqueta, geometría shapely, nombre corto)."""
+    from shapely.geometry import box as _box
+    q = (q or "").strip()
+    if len(q) < 2:
+        return []
+    out = []
+    try:
+        r = requests.get("https://nominatim.openstreetmap.org/search",
+                         params={"q": q, "format": "jsonv2", "polygon_geojson": 1, "polygon_threshold": 0.003,
+                                 "limit": limit, "countrycodes": SA_CODES, "accept-language": lang},
+                         headers=UA, timeout=10)
+        r.raise_for_status()
+        for it in r.json():
+            g = it.get("geojson") or {}
+            if g.get("type") in ("Polygon", "MultiPolygon"):
+                geom = shape(g)
+            else:
+                lat, lon = float(it["lat"]), float(it["lon"])
+                geom = _box(lon - 0.15, lat - 0.15, lon + 0.15, lat + 0.15)
+            out.append((it.get("display_name", q), geom, it.get("name") or q))
+    except Exception:  # noqa: BLE001
+        pass
+    if out:
+        return out
+    pq_ = _plain(q).lower()
+    for name, (a, b, c, d) in GAZ.items():
+        if pq_ in _plain(name).lower():
+            out.append((name + " (aprox.)", _box(c, a, d, b), name.split(",")[0]))
+    for props, geom in _admin():
+        if props.get("prov") and pq_ in _plain(props["prov"]).lower():
+            out.append((f"{props['prov']}, {COUNTRY_ES.get(props['country'], props['country'])}", geom, props["prov"]))
+    out.sort(key=lambda t: (not _plain(t[0]).lower().startswith(pq_), len(t[0])))
+    return out[:limit]

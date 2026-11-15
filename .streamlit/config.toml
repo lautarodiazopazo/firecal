@@ -1,11 +1,16 @@
-# Tema de la app. Reemplazar por los colores de la guía de marca de Space Apps
-# (https://www.spaceappschallenge.org/brand/) si se quiere.
+# Tema Firechron: colores de la guía de marca de NASA Space Apps (https://www.spaceappschallenge.org/brand/)
 [theme]
-base = "light"
-primaryColor = "#E4572E"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F3F5F9"
-textColor = "#1B1F2A"
+base = "dark"
+primaryColor = "#EAFE07"
+backgroundColor = "#07173F"
+secondaryBackgroundColor = "#0B2257"
+textColor = "#FFFFFF"
+linkColor = "#2E96F5"
+borderColor = "#0960E1"
+baseRadius = "10px"
+
+[client]
+toolbarMode = "minimal"
 
 [server]
 maxUploadSize = 50

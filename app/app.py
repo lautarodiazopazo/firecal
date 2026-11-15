@@ -1,15 +1,16 @@
 """
-FireCal · Calendario armonizado de focos de calor (MODIS + VIIRS)
-NASA Space Apps Challenge 2026 — proyecto del equipo, no es una herramienta oficial de NASA.
+Firechron · Calendario histórico armonizado y pronóstico estacional de fuego (MODIS + VIIRS, 2000–2026)
+NASA Space Apps Challenge 2026 — equipo BurnInHell. No es una herramienta oficial de NASA.
 
 Correr:
     streamlit run app/app.py
 """
+import csv
 import datetime as dt
 import io
+import json
 import math
 import os
-import time
 import zipfile
 
 import duckdb
@@ -19,8 +20,10 @@ import pandas as pd
 import plotly.graph_objects as go
 import pyarrow as pa
 import pyarrow.parquet as pq
+import requests
 import shapely
 import streamlit as st
+from branca.element import MacroElement, Template
 from folium.plugins import Draw
 from shapely.geometry import box, shape
 from streamlit_folium import st_folium
@@ -30,24 +33,37 @@ import noticias
 # ------------------------------------------------------------------ config
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_APP = os.environ.get("FIRE_APP_DATA", os.path.join(APP_DIR, "data", "app_data.parquet"))
+DATA_PRON = os.path.join(APP_DIR, "data", "pronostico_app.parquet")
 DATA_1KM = os.environ.get("FIRE_1KM_DATA", os.path.join(APP_DIR, "..", "data", "salida", "armonizado.parquet"))
 DATA_RAW = os.environ.get("FIRE_RAW_DATA", os.path.join(APP_DIR, "..", "data", "parquet"))
+REPORTES = os.path.join(APP_DIR, "data", "reportes.csv")
 
-GRID = 0.1                                   # grado de la grilla de la app
-AQUA_START = dt.date(2002, 7, 4)             # antes: sólo Terra
-VIIRS_START = dt.date(2012, 1, 20)           # desde acá: VIIRS S-NPP
-SNPP_END = dt.date(2026, 11, 2)              # después: NOAA-20
-REF_START = 2003                             # años de referencia (climatología)
-MAX_RAW_ROWS = 1_500_000                     # límite de descarga de focos originales
+GRID = 0.1
+AQUA_START = dt.date(2002, 7, 4)
+VIIRS_START = dt.date(2012, 1, 20)
+SNPP_END = dt.date(2026, 11, 2)
+REF_START = 2003
+MAX_RAW_ROWS = 1_500_000
+MAX_MAP_POINTS = 1500
 
-PRESETS = {  # rectángulos aproximados: (lat_min, lat_max, lon_min, lon_max)
-    "Mendoza (Argentina)": (-37.6, -32.0, -70.6, -66.5),
-    "Sierras de Córdoba (Argentina)": (-33.5, -29.5, -65.5, -63.8),
-    "Delta del Paraná (Argentina)": (-34.4, -32.0, -60.8, -58.3),
-    "Gran Chaco": (-26.0, -18.0, -64.0, -58.0),
-    "Pantanal": (-20.5, -15.5, -58.5, -54.5),
-    "Cerrado / MATOPIBA (Brasil)": (-12.0, -4.0, -48.0, -42.0),
-    "Arco de deforestación amazónico": (-12.0, -7.0, -66.0, -52.0),
+# Paleta oficial de NASA Space Apps (guía de marca)
+BLUE_L, BLUE, BLUE_D, NAVY = "#2E96F5", "#0960E1", "#0042A6", "#07173F"
+RED, RED_D, YELLOW, WHITE = "#E43700", "#8E1100", "#EAFE07", "#FFFFFF"
+CARD = "#0B2257"
+
+FIRE_RAMP = [[0.0, NAVY], [0.15, BLUE_D], [0.4, BLUE_L], [0.65, YELLOW], [0.85, RED], [1.0, RED_D]]
+RAMPS = {"Firechron": FIRE_RAMP, "Viridis": "Viridis", "Inferno": "Inferno", "Cividis": "Cividis", "YlOrRd": "YlOrRd"}
+ANOM_RAMP = [[0.0, BLUE_L], [0.5, "#1B2F66"], [0.8, RED], [1.0, YELLOW]]
+PROB_RAMP = [[0.0, BLUE_D], [0.3, BLUE_L], [0.5, "#5E6C8F"], [0.7, RED], [1.0, YELLOW]]
+
+PRESETS = {
+    "Mendoza (provincia)": None,  # se toma el polígono de la provincia
+    "Luján de Cuyo, Mendoza": noticias.GAZ["Luján de Cuyo, Mendoza"],
+    "General Alvear, Mendoza": noticias.GAZ["General Alvear, Mendoza"],
+    "Sierras de Córdoba": noticias.GAZ["Sierras de Córdoba"],
+    "Delta del Paraná": noticias.GAZ["Delta del Paraná"],
+    "Pantanal": noticias.GAZ["Pantanal"],
+    "Amazonía (arco de deforestación)": noticias.GAZ["Amazonía (arco de deforestación)"],
     "Sudamérica completa": (-56.0, 13.0, -82.0, -34.0),
 }
 
@@ -56,147 +72,115 @@ ACK = ("We acknowledge the use of data and/or imagery from NASA's Fire Informati
        "Near real-time Capability for Earth observations (LANCE) (https://earthdata.nasa.gov/lance) "
        "and NASA's Earth Science Data and Information System (ESDIS).")
 
-# ------------------------------------------------------------------ textos
-TXT = {
-    "es": {
-        "title": "🔥 Calendario armonizado de focos de calor",
-        "subtitle": "MODIS (2000–2012) + VIIRS (2012–hoy) en una sola serie consistente · Sudamérica",
-        "lang": "Idioma",
-        "zone": "1 · Zona de interés",
-        "zone_mode": "Cómo elegir la zona",
-        "m_draw": "Dibujar en el mapa", "m_coords": "Coordenadas", "m_preset": "Zonas de ejemplo",
-        "draw_help": "Usá las herramientas ▭ (rectángulo) o ⬠ (polígono) arriba a la izquierda del mapa.",
-        "lat_min": "Latitud mín.", "lat_max": "Latitud máx.", "lon_min": "Longitud mín.", "lon_max": "Longitud máx.",
-        "preset": "Zona", "preset_note": "Rectángulos aproximados, sólo de ejemplo.",
-        "period": "2 · Período", "range": "Rango de fechas",
-        "options": "Opciones", "excl_terra": "Ocultar nov 2000 – jun 2002 (sólo Terra, menor confianza)",
-        "ramp": "Rampa de color", "log": "Escala logarítmica",
-        "no_zone": "👈 Elegí una zona: dibujala en el mapa, ingresá coordenadas o elegí una zona de ejemplo.",
-        "no_data": "No hay focos en esta zona y período.",
-        "small_zone": "La zona es muy chica para la grilla de 0,1° (~11 km); se usan las celdas que la tocan.",
-        "low_counts": "Pocos focos en esta zona: los valores mensuales son ruidosos y la armonización es menos confiable.",
-        "k_total": "Focos en el período", "k_total_h": "Focos armonizados: celdas de 1 km con fuego por día, en escala VIIRS S-NPP.",
-        "k_peak": "Mes típicamente más activo", "k_year": "Año más activo",
-        "k_now": "Mes actual vs. mediana", "k_now_h": "Comparado con la mediana de los mismos días del mismo mes, {a}–{b}.",
-        "tabs": ["📅 Calendario", "📍 Mes actual vs. historia", "📈 Estacionalidad", "📊 Serie anual", "🗺️ Mapa", "📰 Noticias", "⬇️ Descargas"],
-        "cal_mode": "Mostrar", "cal_abs": "Cantidad de focos", "cal_anom": "Anomalía vs. mediana del mes (%)",
-        "cal_note": "× = sólo Terra (menor confianza; la escala de color no los usa para no aplastar el resto) · ○ = mes incompleto. Pasá el mouse para ver detalles. "
-                    "La cámara de la barra del gráfico lo descarga como PNG.",
-        "year": "Año", "month": "Mes", "focos": "Focos armonizados", "median": "Mediana del mes",
-        "anom": "Anomalía", "source": "Sensor", "partial": "Mes incompleto",
-        "cmp_pick": "Mes a analizar", "cmp_days": "Días comparados: 1 al {d}",
-        "cmp_cur": "Este mes", "cmp_med": "Mediana {a}–{b}", "cmp_pct": "Percentil",
-        "cmp_rank": "Puesto", "cmp_rank_v": "{r}° de {n} años",
-        "cum_title": "Focos acumulados en el mes", "day": "Día del mes", "iqr": "Rango típico (P25–P75)",
-        "bars_title": "Mismo período en cada año",
-        "seas_year": "Destacar año", "seas_title": "Perfil estacional: mediana y rango típico ({a}–{b})",
-        "ann_raw": "Mostrar serie sin armonizar", "ann_title": "Total anual de focos",
-        "harm": "Armonizado", "terra_y": "incluye meses sólo Terra (menor confianza)", "raw": "Sin armonizar (celdas-día crudas)", "partial_y": "año incompleto",
-        "ann_note": "La serie sin armonizar muestra el salto artificial de 2012 (cambio MODIS → VIIRS) que corrige la armonización.",
-        "map_title": "Focos en la zona y período (celdas de 0,1°)",
-        "dl_intro": "Todas las descargas son ZIP con el CSV y un LEEME.txt con unidades, método y la cita de FIRMS.",
-        "dl_month": "Calendario mensual de la zona", "dl_daily": "Focos diarios por celda de 0,1°",
-        "dl_1km": "Focos armonizados por celda de 1 km y día", "dl_raw": "Focos originales de FIRMS (sin armonizar)",
-        "dl_prep": "Preparar", "dl_get": "Descargar", "dl_missing": "No disponible en esta instalación (falta {f}).",
-        "dl_toolarge": "Son {n:,} focos: reducí la zona o el período (máximo {m:,}).",
-        "dl_rows": "{n:,} filas listas.",
-        "n_intro": "Titulares de prensa (GDELT, desde 2017) y eventos destacados (Wikipedia) sobre incendios en los lugares "
-                   "con más focos de tu zona, para el período elegido. Se muestran sólo titulares y enlaces; el contenido es de cada medio.",
-        "n_places": "Lugares con más focos en la zona y período", "n_none_places": "No hay focos para ubicar lugares.",
-        "n_extra": "Palabras clave adicionales (opcional)", "n_months": "Meses a consultar en prensa (máx. 3)",
-        "n_btn": "🔎 Buscar noticias", "n_press": "📰 Prensa (GDELT)", "n_wiki": "📚 Eventos destacados (Wikipedia)",
-        "n_pre2017": "GDELT cubre desde 2017: para años anteriores sólo hay eventos de Wikipedia.",
-        "n_rate": "GDELT está limitando consultas desde esta red (muchos usuarios a la vez). Probá de nuevo en un minuto.",
-        "n_media": "Sólo medios reconocidos (lista curada) en español, portugués o inglés · 📍 medio de la zona · 🌐 internacional o regional.",
-        "n_filtered": "{n} artículos encontrados, pero ninguno de medios reconocidos de la lista.",
-        "n_err": "No se pudo consultar GDELT ({e}).", "n_empty": "Sin resultados.",
-        "n_wait": "Consultando… (GDELT permite 1 consulta cada 5 segundos)",
-        "footer": "Proyecto del equipo BurnInHell para el NASA Space Apps Challenge 2026 (sede Mendoza). No es una herramienta oficial de NASA.",
-        "src": {"Terra": "MODIS Terra × k", "MODIS": "MODIS × k", "SNPP": "VIIRS S-NPP", "NOAA20": "VIIRS NOAA-20 × k"},
-        "months": ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"],
-    },
-    "en": {
-        "title": "🔥 Harmonized active-fire calendar",
-        "subtitle": "MODIS (2000–2012) + VIIRS (2012–today) in one consistent series · South America",
-        "lang": "Language",
-        "zone": "1 · Area of interest",
-        "zone_mode": "How to choose the area",
-        "m_draw": "Draw on the map", "m_coords": "Coordinates", "m_preset": "Example areas",
-        "draw_help": "Use the ▭ (rectangle) or ⬠ (polygon) tools at the top-left of the map.",
-        "lat_min": "Min latitude", "lat_max": "Max latitude", "lon_min": "Min longitude", "lon_max": "Max longitude",
-        "preset": "Area", "preset_note": "Approximate rectangles, for illustration only.",
-        "period": "2 · Period", "range": "Date range",
-        "options": "Options", "excl_terra": "Hide Nov 2000 – Jun 2002 (Terra only, lower confidence)",
-        "ramp": "Color ramp", "log": "Log scale",
-        "no_zone": "👈 Choose an area: draw it on the map, enter coordinates or pick an example area.",
-        "no_data": "No hotspots in this area and period.",
-        "small_zone": "The area is very small for the 0.1° (~11 km) grid; cells touching it are used.",
-        "low_counts": "Few hotspots in this area: monthly values are noisy and harmonization is less reliable.",
-        "k_total": "Hotspots in period", "k_total_h": "Harmonized hotspots: 1-km cells with fire per day, on the VIIRS S-NPP scale.",
-        "k_peak": "Typically busiest month", "k_year": "Busiest year",
-        "k_now": "Current month vs. median", "k_now_h": "Compared with the median of the same days of the same month, {a}–{b}.",
-        "tabs": ["📅 Calendar", "📍 Current month vs. history", "📈 Seasonality", "📊 Annual series", "🗺️ Map", "📰 News", "⬇️ Downloads"],
-        "cal_mode": "Show", "cal_abs": "Hotspot count", "cal_anom": "Anomaly vs. monthly median (%)",
-        "cal_note": "× = Terra only (lower confidence; excluded from the color scale so they don't flatten the rest) · ○ = incomplete month. Hover for details. "
-                    "The camera icon in the chart toolbar downloads it as PNG.",
-        "year": "Year", "month": "Month", "focos": "Harmonized hotspots", "median": "Monthly median",
-        "anom": "Anomaly", "source": "Sensor", "partial": "Incomplete month",
-        "cmp_pick": "Month to analyze", "cmp_days": "Days compared: 1 to {d}",
-        "cmp_cur": "This month", "cmp_med": "Median {a}–{b}", "cmp_pct": "Percentile",
-        "cmp_rank": "Rank", "cmp_rank_v": "#{r} of {n} years",
-        "cum_title": "Cumulative hotspots in the month", "day": "Day of month", "iqr": "Typical range (P25–P75)",
-        "bars_title": "Same period in every year",
-        "seas_year": "Highlight year", "seas_title": "Seasonal profile: median and typical range ({a}–{b})",
-        "ann_raw": "Show non-harmonized series", "ann_title": "Annual hotspot total",
-        "harm": "Harmonized", "terra_y": "includes Terra-only months (lower confidence)", "raw": "Non-harmonized (raw cell-days)", "partial_y": "incomplete year",
-        "ann_note": "The non-harmonized series shows the artificial 2012 jump (MODIS → VIIRS switch) that harmonization removes.",
-        "map_title": "Hotspots in the area and period (0.1° cells)",
-        "dl_intro": "Every download is a ZIP with the CSV and a README.txt with units, method and the FIRMS citation.",
-        "dl_month": "Monthly calendar of the area", "dl_daily": "Daily hotspots per 0.1° cell",
-        "dl_1km": "Harmonized hotspots per 1-km cell and day", "dl_raw": "Original FIRMS hotspots (not harmonized)",
-        "dl_prep": "Prepare", "dl_get": "Download", "dl_missing": "Not available in this installation ({f} missing).",
-        "dl_toolarge": "That is {n:,} hotspots: reduce the area or period (max {m:,}).",
-        "dl_rows": "{n:,} rows ready.",
-        "n_intro": "Press headlines (GDELT, since 2017) and notable events (Wikipedia) about fires in the places with the most "
-                   "hotspots in your area, for the chosen period. Only headlines and links are shown; content belongs to each outlet.",
-        "n_places": "Places with the most hotspots in the area and period", "n_none_places": "No hotspots to locate places.",
-        "n_extra": "Extra keywords (optional)", "n_months": "Months to search in the press (max 3)",
-        "n_btn": "🔎 Search news", "n_press": "📰 Press (GDELT)", "n_wiki": "📚 Notable events (Wikipedia)",
-        "n_pre2017": "GDELT covers 2017 onwards: earlier years only have Wikipedia events.",
-        "n_rate": "GDELT is rate-limiting this network (many users at once). Try again in a minute.",
-        "n_media": "Recognized outlets only (curated list) in Spanish, Portuguese or English · 📍 local outlet · 🌐 international or regional.",
-        "n_filtered": "{n} articles found, but none from recognized outlets in the list.",
-        "n_err": "Could not query GDELT ({e}).", "n_empty": "No results.",
-        "n_wait": "Searching… (GDELT allows 1 query every 5 seconds)",
-        "footer": "Project by team BurnInHell for the NASA Space Apps Challenge 2026 (Mendoza local event). Not an official NASA tool.",
-        "src": {"Terra": "MODIS Terra × k", "MODIS": "MODIS × k", "SNPP": "VIIRS S-NPP", "NOAA20": "VIIRS NOAA-20 × k"},
-        "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
-    },
-}
+LOGO = f"""<svg viewBox="0 0 64 64" width="{{s}}" height="{{s}}" xmlns="http://www.w3.org/2000/svg" aria-label="Firechron">
+<circle cx="32" cy="32" r="27" fill="none" stroke="{WHITE}" stroke-width="3.5"/>
+<g stroke="{WHITE}" stroke-width="2.5" stroke-linecap="round">
+<line x1="32" y1="5" x2="32" y2="10"/><line x1="59" y1="32" x2="54" y2="32"/>
+<line x1="32" y1="59" x2="32" y2="54"/><line x1="5" y1="32" x2="10" y2="32"/></g>
+<path d="M32 15c3 7 11 11 11 21a11 11 0 0 1-22 0c0-5 3-8 5-10 0 4 2 6 4 6-1-6 0-11 2-17z" fill="{YELLOW}"/>
+<path d="M32 33c2 3 5 5 5 8a5 5 0 0 1-10 0c0-3 3-5 5-8z" fill="{RED}"/></svg>"""
 
-RAMPS = {"Viridis": "Viridis", "Inferno": "Inferno", "Cividis": "Cividis", "YlOrRd": "YlOrRd"}
-C_MODIS, C_VIIRS, C_RAW, C_CUR = "#3B7DD8", "#E07B39", "#9E9E9E", "#C0392B"
+st.set_page_config(page_title="Firechron · El calendario del fuego en Sudamérica", page_icon="🔥",
+                   layout="wide", initial_sidebar_state="collapsed")
 
-st.set_page_config(page_title="FireCal · Space Apps 2026", page_icon="🔥", layout="wide")
+# ------------------------------------------------------------------ idioma
+if "lang" not in st.session_state:
+    st.session_state.lang = "es"
+L = st.session_state.lang
+
+
+def tr(es, en):
+    return es if L == "es" else en
+
+
+MONTHS = (["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"] if L == "es" else
+          ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
+MONTHS_L = (["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre",
+             "noviembre", "diciembre"] if L == "es" else
+            ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+             "November", "December"])
+
+# ------------------------------------------------------------------ estilo
+st.markdown(f"""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600;700;800&family=Fira+Sans+Condensed:wght@600;700;800&display=swap');
+html, body, [class*="css"], .stApp, button, input, textarea, select {{ font-family: 'Fira Sans', sans-serif; }}
+.stApp {{ background: radial-gradient(1200px 600px at 85% -10%, #0B3A9C 0%, rgba(7,23,63,0) 60%),
+          linear-gradient(180deg, #0A2A78 0%, {NAVY} 420px); }}
+[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {{ display: none; }}
+.block-container {{ padding-top: 1.2rem; padding-bottom: 3rem; max-width: 1420px; }}
+h1, h2, h3, h4 {{ font-family: 'Fira Sans Condensed', 'Fira Sans', sans-serif; letter-spacing: .2px; }}
+[class*="st-key-card"] {{ background: {CARD}; border: 1.5px solid {BLUE}; border-radius: 14px; padding: 14px 16px 12px; }}
+.fc-ct {{ font-family: 'Fira Sans Condensed', sans-serif; font-weight: 700; font-size: 1.02rem; text-transform: uppercase;
+          letter-spacing: .4px; color: {WHITE}; margin: 0 0 2px; }}
+.fc-ct b {{ color: {YELLOW}; margin-right: 6px; }}
+.fc-hero {{ display: flex; align-items: center; gap: 18px; }}
+.fc-name {{ font-family: 'Fira Sans Condensed', sans-serif; font-weight: 800; font-size: 3.1rem; line-height: 1; margin: 0; }}
+.fc-name span {{ color: {YELLOW}; }}
+.fc-tag {{ font-family: 'Fira Sans Condensed', sans-serif; font-weight: 700; font-size: 1.25rem; color: {YELLOW};
+           text-transform: uppercase; margin-top: 6px; line-height: 1.15; }}
+.fc-tag i {{ color: {WHITE}; font-style: normal; }}
+.fc-team {{ margin-top: 8px; font-size: .92rem; opacity: .9; }}
+.fc-team b {{ color: {YELLOW}; }}
+.fc-pitch {{ font-size: 1.05rem; margin: 10px 0 4px; max-width: 900px; }}
+.fc-steps {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 14px 0 18px; }}
+.fc-step {{ background: rgba(9,96,225,.18); border: 1px solid rgba(46,150,245,.55); border-radius: 12px; padding: 12px;
+            display: flex; gap: 10px; align-items: center; }}
+.fc-step .ic {{ flex: 0 0 44px; height: 44px; border-radius: 50%; background: {YELLOW}; color: {NAVY};
+                display: flex; align-items: center; justify-content: center; font-size: 1.35rem; }}
+.fc-step .tx {{ font-size: .93rem; line-height: 1.2; }}
+.fc-step .tx b {{ display: block; color: {YELLOW}; font-family: 'Fira Sans Condensed', sans-serif; font-size: .8rem; }}
+.fc-kpis {{ display: grid; grid-template-columns: 1fr; gap: 12px; }}
+.fc-kpi {{ background: {CARD}; border: 1.5px solid {BLUE}; border-radius: 14px; padding: 14px 16px; }}
+.fc-kpi .l {{ font-size: .95rem; opacity: .92; }}
+.fc-kpi .v {{ font-family: 'Fira Sans Condensed', sans-serif; font-weight: 800; font-size: 2.1rem; line-height: 1.1; }}
+.fc-kpi .d {{ font-size: 1.15rem; font-weight: 700; }}
+.up {{ color: #FF6A3D; }} .down {{ color: {BLUE_L}; }} .ok {{ color: #7CF29A; }}
+.fc-chip {{ display: inline-block; padding: 4px 12px; border-radius: 999px; background: rgba(46,150,245,.2);
+            border: 1px solid {BLUE_L}; margin: 2px 4px 2px 0; font-size: .9rem; }}
+.fc-legend {{ font-size: .82rem; opacity: .9; margin-top: 4px; }}
+.fc-sw {{ display:inline-block; width: 70px; height: 9px; border-radius: 5px; vertical-align: middle; margin: 0 6px; }}
+.fc-fc {{ background: {CARD}; border: 1.5px solid {BLUE}; border-radius: 14px; padding: 14px 16px; height: 100%; }}
+.fc-fc .m {{ font-family: 'Fira Sans Condensed', sans-serif; font-weight: 800; font-size: 1.3rem; }}
+.fc-bar {{ height: 10px; background: rgba(255,255,255,.15); border-radius: 6px; overflow: hidden; margin: 6px 0; }}
+.fc-bar > div {{ height: 100%; border-radius: 6px; }}
+[class*="st-key-row_"] [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap !important; gap: .5rem; }}
+[class*="st-key-row_"] [data-testid="stColumn"] {{ min-width: 0 !important; width: auto !important; flex: 1 1 auto; }}
+[class*="st-key-row_"] [data-testid="stColumn"]:last-child {{ flex: 0 0 auto; }}
+[class*="st-key-row_chips"] [data-testid="stColumn"], [class*="st-key-row_chips"] [data-testid="stColumn"]:last-child {{ flex: 1 1 0; }}
+.fc-foot {{ font-size: .8rem; opacity: .75; margin-top: 30px; }}
+button[kind="primary"], button[data-testid="stBaseButton-primary"] {{ color: {NAVY} !important; font-weight: 700; }}
+[data-testid="stSegmentedControl"] button[aria-checked="true"], [data-testid="stBaseButton-segmented_controlActive"] {{
+    background: {YELLOW} !important; color: {NAVY} !important; font-weight: 700; }}
+[data-testid="stTabs"] button p {{ font-size: 1rem; }}
+@media (max-width: 640px) {{
+  .fc-name {{ font-size: 2.2rem; }} .fc-tag {{ font-size: 1rem; }}
+  .fc-steps {{ grid-template-columns: 1fr 1fr; gap: 8px; }}
+  .fc-step {{ padding: 8px; }} .fc-step .ic {{ flex-basis: 34px; height: 34px; font-size: 1.05rem; }}
+  .fc-kpis {{ grid-template-columns: 1fr 1fr; gap: 8px; }}
+  .fc-kpi .v {{ font-size: 1.45rem; }} .fc-kpi .l {{ font-size: .8rem; }}
+}}
+</style>
+""", unsafe_allow_html=True)
 
 
 # ------------------------------------------------------------------ datos
-@st.cache_resource(show_spinner="Cargando datos…")
+@st.cache_resource(show_spinner="Cargando 25 años de satélites…")
 def load_data():
     t = pq.read_table(DATA_APP)
     days = t.column("date").cast(pa.int32()).to_numpy()
     d64 = days.astype("datetime64[D]")
-    m64 = d64.astype("datetime64[M]")
-    data = {
-        "g_r": t.column("g_r").to_numpy().astype(np.int16),
-        "g_c": t.column("g_c").to_numpy().astype(np.int16),
-        "days": days,
-        "focos": t.column("focos").to_numpy().astype(np.float32),
-        "crudo": t.column("crudo").to_numpy().astype(np.int32),
-    }
-    dmin = d64.min().astype(object)
-    dmax = d64.max().astype(object)
-    return data, dmin, dmax
+    data = {"g_r": t.column("g_r").to_numpy().astype(np.int16), "g_c": t.column("g_c").to_numpy().astype(np.int16),
+            "days": days, "focos": t.column("focos").to_numpy().astype(np.float32),
+            "crudo": t.column("crudo").to_numpy().astype(np.int32)}
+    return data, d64.min().astype(object), d64.max().astype(object)
+
+
+@st.cache_resource
+def load_pron():
+    if not os.path.exists(DATA_PRON):
+        return None
+    return pd.read_parquet(DATA_PRON)
 
 
 def source_of(d):
@@ -204,20 +188,16 @@ def source_of(d):
         return "Terra"
     if d < VIIRS_START:
         return "MODIS"
-    if d <= SNPP_END:
-        return "SNPP"
-    return "NOAA20"
+    return "SNPP" if d <= SNPP_END else "NOAA20"
 
 
 def cell_selection(data, wkt):
-    """Índices de filas y celdas dentro de la geometría."""
     geom = shapely.from_wkt(wkt)
     minx, miny, maxx, maxy = geom.bounds
     r0, r1 = math.floor(miny / GRID), math.floor(maxy / GRID)
     c0, c1 = math.floor(minx / GRID), math.floor(maxx / GRID)
     g_r, g_c = data["g_r"], data["g_c"]
-    m = (g_r >= r0) & (g_r <= r1) & (g_c >= c0) & (g_c <= c1)
-    idx = np.flatnonzero(m)
+    idx = np.flatnonzero((g_r >= r0) & (g_r <= r1) & (g_c >= c0) & (g_c <= c1))
     if idx.size == 0:
         return idx, False
     rr, cc = g_r[idx].astype(np.int32), g_c[idx].astype(np.int32)
@@ -226,9 +206,8 @@ def cell_selection(data, wkt):
     ur, uc = ukey // (c1 - c0 + 1) + r0, ukey % (c1 - c0 + 1) + c0
     inside = shapely.contains_xy(geom, (uc + 0.5) * GRID, (ur + 0.5) * GRID)
     small = False
-    if not inside.any():  # zona más chica que una celda: usar celdas que la tocan
-        boxes = shapely.box(uc * GRID, ur * GRID, (uc + 1) * GRID, (ur + 1) * GRID)
-        inside = shapely.intersects(geom, boxes)
+    if not inside.any():
+        inside = shapely.intersects(geom, shapely.box(uc * GRID, ur * GRID, (uc + 1) * GRID, (ur + 1) * GRID))
         small = True
     return idx[inside[inv]], small
 
@@ -245,8 +224,7 @@ def zone_daily(wkt):
         c = np.bincount(dd, weights=data["crudo"][idx], minlength=n)
     else:
         f = c = np.zeros(n)
-    dates = pd.date_range(dmin, dmax, freq="D")
-    df = pd.DataFrame({"date": dates, "focos": f, "crudo": c})
+    df = pd.DataFrame({"date": pd.date_range(dmin, dmax, freq="D"), "focos": f, "crudo": c})
     df["year"], df["month"], df["day"] = df.date.dt.year, df.date.dt.month, df.date.dt.day
     return df, small, int(idx.size)
 
@@ -256,22 +234,48 @@ def zone_cells(wkt, d0, d1):
     data, _, _ = load_data()
     idx, _ = cell_selection(data, wkt)
     days = data["days"][idx]
-    a = np.datetime64(d0, "D").astype(np.int64)
-    b = np.datetime64(d1, "D").astype(np.int64)
+    a, b = np.datetime64(d0, "D").astype(np.int64), np.datetime64(d1, "D").astype(np.int64)
     idx = idx[(days >= a) & (days <= b)]
-    df = pd.DataFrame({"g_r": data["g_r"][idx], "g_c": data["g_c"][idx], "focos": data["focos"][idx],
-                       "days": data["days"][idx]})
-    return df
+    return pd.DataFrame({"g_r": data["g_r"][idx], "g_c": data["g_c"][idx], "focos": data["focos"][idx],
+                         "days": data["days"][idx]})
+
+
+@st.cache_data(show_spinner=False, ttl=6 * 3600)
+def buscar(q, lang):
+    return [(lab, shapely.to_wkt(g, rounding_precision=4), short) for lab, g, short in noticias.buscar_lugar(q, lang)]
+
+
+@st.cache_data(show_spinner=False, ttl=6 * 3600)
+def _news_cached(places, countries, y, m, d1max):
+    a = dt.date(y, m, 1)
+    b = min(dt.date(y, m, pd.Period(f"{y}-{m:02d}").days_in_month), d1max)
+    arts, err = noticias.google_news(list(places), list(countries), a, b)
+    if not arts and a >= noticias.GDELT_START:
+        g, err2 = noticias.gdelt_search(noticias.gdelt_query(list(places)), a, b, retries=1)
+        arts = noticias.filtrar_medios(g, list(countries), maximo=8)
+        err = err if (err and err2) else None
+    if err and not arts:
+        raise ConnectionError(err)   # no guardar en caché un fallo de red
+    return arts
+
+
+def news_for(places, countries, y, m, d1max):
+    try:
+        return _news_cached(places, countries, y, m, d1max), None
+    except ConnectionError:
+        return [], "net"
+
+
+@st.cache_data(show_spinner=False, ttl=24 * 3600)
+def wiki_for(provs, countries, y):
+    return noticias.wiki_events([tuple(p) for p in provs], list(countries), y, y, max_items=6)
 
 
 def ref_years(dmax):
-    last_full = dmax.year if dmax == dt.date(dmax.year, 12, 31) else dmax.year - 1
-    return REF_START, last_full
+    return REF_START, (dmax.year if dmax == dt.date(dmax.year, 12, 31) else dmax.year - 1)
 
 
-# ------------------------------------------------------------------ cálculos
-def monthly_table(daily, d0, d1, dmin, dmax, ref):
-    """Tabla año × mes dentro del rango + mediana de referencia por mes."""
+def monthly_table(daily, d0, d1, ref):
     ra, rb = ref
     full = daily.groupby(["year", "month"], as_index=False)[["focos", "crudo"]].sum()
     clim = full[(full.year >= ra) & (full.year <= rb)].groupby("month").focos.median()
@@ -283,7 +287,7 @@ def monthly_table(daily, d0, d1, dmin, dmax, ref):
     mt["median"] = mt.month.map(clim)
     mt["anom"] = np.where(mt["median"] > 0, (mt.focos - mt["median"]) / mt["median"] * 100, np.nan)
     mt["source"] = [source_of(dt.date(y, m, 15)) for y, m in zip(mt.year, mt.month)]
-    return mt, clim
+    return mt, clim, full
 
 
 def compare_month(daily, y, m, dmax, ref):
@@ -291,461 +295,794 @@ def compare_month(daily, y, m, dmax, ref):
     mlen = pd.Period(f"{y}-{m:02d}").days_in_month
     D = dmax.day if (y, m) == (dmax.year, dmax.month) else mlen
     cur = daily[(daily.year == y) & (daily.month == m) & (daily.day <= D)].focos.sum()
-    vals = {}
-    for yy in range(ra, rb + 1):
-        if yy == y:
-            continue
-        vals[yy] = daily[(daily.year == yy) & (daily.month == m) & (daily.day <= D)].focos.sum()
+    vals = {yy: daily[(daily.year == yy) & (daily.month == m) & (daily.day <= D)].focos.sum()
+            for yy in range(ra, rb + 1) if yy != y}
     v = np.array(list(vals.values()))
     med = float(np.median(v)) if v.size else np.nan
-    pct = float((np.sum(v < cur) + 0.5 * np.sum(v == cur)) / v.size * 100) if v.size else np.nan
-    rank = int(np.sum(v > cur)) + 1
     return dict(D=D, cur=float(cur), med=med, p25=float(np.percentile(v, 25)), p75=float(np.percentile(v, 75)),
-                pct=pct, rank=rank, n=v.size + 1, vals=vals,
+                rank=int(np.sum(v > cur)) + 1, n=v.size + 1, vals=vals,
                 anom=(cur - med) / med * 100 if med > 0 else np.nan)
 
 
-def fmt(x):
+def fmt(x, dec=0):
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return "–"
-    s = f"{x:,.0f}"
-    return s.replace(",", ".") if st.session_state.get("lang", "es") == "es" else s
+    s = f"{x:,.{dec}f}"
+    return s.replace(",", "X").replace(".", ",").replace("X", ".") if L == "es" else s
 
 
-def readme(T, desc, units):
+def anom_words(a):
+    """Anomalía en palabras simples."""
+    if a is None or np.isnan(a):
+        return tr("sin referencia", "no reference"), "ok"
+    r = 1 + a / 100
+    if a >= 15:
+        return (tr(f"{fmt(r, 1)} veces lo normal", f"{fmt(r, 1)}× normal") if r >= 2 else
+                tr(f"{a:+.0f} % más que lo normal", f"{a:+.0f}% above normal")), "up"
+    if a <= -15:
+        return tr(f"{abs(a):.0f} % menos que lo normal", f"{abs(a):.0f}% below normal"), "down"
+    return tr("dentro de lo normal", "about normal"), "ok"
+
+
+def style_fig(fig, h, **kw):
+    fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      font=dict(family="Fira Sans, sans-serif", color=WHITE, size=13), height=h,
+                      **{"margin": dict(l=10, r=10, t=50, b=10), **kw})
+    fig.update_xaxes(gridcolor="rgba(255,255,255,.08)")
+    fig.update_yaxes(gridcolor="rgba(255,255,255,.08)")
+    return fig
+
+
+def ramp_color(scale, v):
+    """Color de una rampa plotly (lista o nombre) en v∈[0,1]."""
+    import plotly.colors as pc
+    if isinstance(scale, str):
+        scale = pc.get_colorscale(scale)
+    return pc.sample_colorscale(scale, [min(1, max(0, float(v)))])[0]
+
+
+def card_title(num, text, help_md=None):
+    c1, c2 = st.container(key=f"row_t{abs(hash(num)) % 10**6}").columns([7, 1], vertical_alignment="center")
+    c1.markdown(f'<div class="fc-ct"><b>{num}</b>{text}</div>', unsafe_allow_html=True)
+    if help_md:
+        with c2.popover("?", help=tr("¿Qué es esto?", "What is this?")):
+            st.markdown(help_md)
+
+
+def help_pop(md, label="?"):
+    with st.popover(label):
+        st.markdown(md)
+
+
+def readme(desc, units):
     return (f"{desc}\n\nUnits / Unidades: {units}\n\n"
             "Method / Método: MODIS (Terra+Aqua, 1 km) and VIIRS (S-NPP, NOAA-20, 375 m) active-fire hotspots from "
             "NASA FIRMS, filtered (nominal/high confidence, vegetation fires, static sources removed), counted as "
             "1-km cell-days and harmonized to the VIIRS S-NPP scale with region-specific (1°x1°) factors calibrated "
             "on 2012-2017 and validated on 2018-2020.\n\n"
-            f"Data acknowledgment:\n{ACK}\n\n{T['footer']}\n")
+            f"Data acknowledgment:\n{ACK}\n\nFirechron — team BurnInHell, NASA Space Apps Challenge 2026 (Mendoza). "
+            "Not an official NASA product.\n")
 
 
-def zip_bytes(name, df, T, desc, units):
+def zip_bytes(name, df, desc, units):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr(f"{name}.csv", df.to_csv(index=False))
-        z.writestr("LEEME_README.txt", readme(T, desc, units))
+        z.writestr("LEEME_README.txt", readme(desc, units))
     return buf.getvalue()
 
 
-# ------------------------------------------------------------------ sidebar
-lang = st.sidebar.radio("🌐", ["Español", "English"], horizontal=True, label_visibility="collapsed")
-L = "es" if lang == "Español" else "en"
-st.session_state["lang"] = L
-T = TXT[L]
-MONTHS = T["months"]
+def set_zone(wkt, label, short):
+    st.session_state.zone = {"wkt": wkt, "label": label, "short": short}
+    st.session_state.pop("news_open", None)
 
+
+# ------------------------------------------------------------------ datos base
 try:
     data, DMIN, DMAX = load_data()
 except FileNotFoundError:
-    st.error(f"No encuentro los datos de la app: {DATA_APP}\n\nCorré primero `python app/preparar_datos_app.py`.")
+    st.error(f"No encuentro los datos de la app: {DATA_APP}. Corré primero `python app/preparar_datos_app.py`.")
     st.stop()
 REF = ref_years(DMAX)
+PRON = load_pron()
 
-st.sidebar.header(T["zone"])
-mode = st.sidebar.radio(T["zone_mode"], [T["m_draw"], T["m_preset"], T["m_coords"]])
-geom = None
-if mode == T["m_preset"]:
-    pname = st.sidebar.selectbox(T["preset"], list(PRESETS))
-    a, b, c, d = PRESETS[pname]
-    geom = box(c, a, d, b)
-    st.sidebar.caption(T["preset_note"])
-elif mode == T["m_coords"]:
-    c1, c2 = st.sidebar.columns(2)
-    la0 = c1.number_input(T["lat_min"], -60.0, 15.0, -37.6, 0.1)
-    la1 = c2.number_input(T["lat_max"], -60.0, 15.0, -32.0, 0.1)
-    lo0 = c1.number_input(T["lon_min"], -85.0, -30.0, -70.6, 0.1)
-    lo1 = c2.number_input(T["lon_max"], -85.0, -30.0, -66.5, 0.1)
-    if la1 > la0 and lo1 > lo0:
-        geom = box(lo0, la0, lo1, la1)
-else:
-    st.sidebar.info(T["draw_help"])
-
-st.sidebar.header(T["period"])
-rng = st.sidebar.date_input(T["range"], value=(DMIN, DMAX), min_value=DMIN, max_value=DMAX, format="DD/MM/YYYY")
-D0, D1 = (rng if isinstance(rng, (tuple, list)) and len(rng) == 2 else (DMIN, DMAX))
-
-with st.sidebar.expander(T["options"]):
-    excl_terra = st.checkbox(T["excl_terra"], value=False)
-    ramp = st.selectbox(T["ramp"], list(RAMPS), index=0)
-    logscale = st.checkbox(T["log"], value=False)
-
-st.sidebar.markdown("---")
-st.sidebar.caption("Data: NASA FIRMS (MODIS C6.1, VIIRS 375 m S-NPP / NOAA-20). " + T["footer"])
-
-# ------------------------------------------------------------------ cabecera + mapa de selección
-st.title(T["title"])
-st.caption(T["subtitle"])
-
-fmap = folium.Map(location=[-20, -60], zoom_start=3, tiles="OpenStreetMap", control_scale=True,
-                  scrollWheelZoom=False)
-if geom is not None:
-    folium.GeoJson(shapely.geometry.mapping(geom),
-                   style_function=lambda _: {"color": C_CUR, "weight": 2, "fillOpacity": 0.08}).add_to(fmap)
-    minx, miny, maxx, maxy = geom.bounds
-    fmap.fit_bounds([[miny, minx], [maxy, maxx]])
-if mode == T["m_draw"]:
-    Draw(export=False, draw_options={"polyline": False, "circle": False, "marker": False,
-                                     "circlemarker": False, "polygon": True, "rectangle": True},
-         edit_options={"edit": False}).add_to(fmap)
-out = st_folium(fmap, height=380, use_container_width=True, key=f"map_{mode}",
-                returned_objects=["last_active_drawing"] if mode == T["m_draw"] else [])
-if mode == T["m_draw"] and out and out.get("last_active_drawing"):
-    g = out["last_active_drawing"].get("geometry")
-    if g and g.get("type") in ("Polygon", "MultiPolygon"):
-        geom = shape(g)
-
-if geom is None or geom.is_empty:
-    st.info(T["no_zone"])
-    st.stop()
-
-WKT = shapely.to_wkt(geom, rounding_precision=4)
-daily, small, nrows = zone_daily(WKT)
-if small:
-    st.warning(T["small_zone"])
-if nrows == 0 or daily.focos.sum() == 0:
-    st.warning(T["no_data"])
-    st.stop()
-
-mt, clim = monthly_table(daily, D0, D1, DMIN, DMAX, REF)
-if excl_terra:
-    mt = mt[mt.source != "Terra"]
-annual_ref = daily[(daily.year >= REF[0]) & (daily.year <= REF[1])].groupby("year").focos.sum()
-if annual_ref.median() < 100:
-    st.warning(T["low_counts"])
-
-# ------------------------------------------------------------------ KPIs
-cmp_now = compare_month(daily, DMAX.year, DMAX.month, DMAX, REF)
-yr = mt[(mt.year >= REF[0]) & (mt.year <= REF[1])].groupby("year").focos.sum()
-k1, k2, k3, k4 = st.columns(4)
-k1.metric(T["k_total"], fmt(mt.focos.sum()), help=T["k_total_h"])
-k2.metric(T["k_peak"], MONTHS[int(clim.idxmax()) - 1] if clim.max() > 0 else "–")
-k3.metric(T["k_year"], str(int(yr.idxmax())) if len(yr) else "–", fmt(yr.max()) if len(yr) else None,
-          delta_color="off")
-k4.metric(f"{T['k_now']} ({MONTHS[DMAX.month - 1]} {DMAX.year})", fmt(cmp_now["cur"]),
-          None if np.isnan(cmp_now["anom"]) else f"{cmp_now['anom']:+.0f} %",
-          delta_color="inverse", help=T["k_now_h"].format(a=REF[0], b=REF[1]))
-
-tabs = st.tabs(T["tabs"])
-
-# ------------------------------------------------------------------ 1. calendario
-with tabs[0]:
-    cmode = st.radio(T["cal_mode"], [T["cal_abs"], T["cal_anom"]], horizontal=True)
-    years = sorted(mt.year.unique())
-    ylab = [str(y) for y in years]
-    piv = lambda col: mt.pivot(index="year", columns="month", values=col).reindex(index=years, columns=range(1, 13))
-    # tope de color: meses que no son sólo-Terra (si no, 2000-2002 aplasta el resto)
-    zcap = mt.loc[mt.source != "Terra", "focos"].max() if (mt.source != "Terra").any() else mt.focos.max()
-    Z, MED, AN = piv("focos"), piv("median"), piv("anom")
-    SRC, PART = piv("source"), piv("partial")
-    custom = np.dstack([MED.values, AN.values,
-                        np.vectorize(lambda s: T["src"].get(s, "") if isinstance(s, str) else "")(SRC.values.astype(object)),
-                        np.where(PART.values == True, "✓", "")])
-    if cmode == T["cal_abs"]:
-        zv = np.log10(1 + Z.values) if logscale else Z.values
-        cb = dict(title=T["focos"])
-        if logscale:
-            mx = np.nanmax(Z.values)
-            ticks = [v for v in [0, 1, 10, 100, 1e3, 1e4, 1e5, 1e6] if v <= mx * 1.01]
-            cb.update(tickvals=[np.log10(1 + v) for v in ticks], ticktext=[fmt(v) for v in ticks])
-        zmax = np.log10(1 + zcap) if logscale else zcap
-        hm = go.Heatmap(z=zv, x=MONTHS, y=ylab, colorscale=RAMPS[ramp], colorbar=cb, customdata=custom,
-                        zmin=0, zmax=zmax,
-                        text=Z.values, xgap=1, ygap=1,
-                        hovertemplate=(f"<b>%{{x}} %{{y}}</b><br>{T['focos']}: %{{text:,.0f}}<br>"
-                                       f"{T['median']}: %{{customdata[0]:,.0f}}<br>{T['anom']}: %{{customdata[1]:+.0f}} %<br>"
-                                       f"{T['source']}: %{{customdata[2]}}<br>{T['partial']}: %{{customdata[3]}}<extra></extra>"))
+if "zone" not in st.session_state:
+    mdz = [r for r in buscar("Mendoza", "es") if r[0].startswith("Mendoza")]
+    if mdz:
+        set_zone(mdz[0][1], "Mendoza, Argentina", "Mendoza")
     else:
-        lim = np.nanpercentile(np.abs(AN.values), 95) if np.isfinite(AN.values).any() else 100
-        hm = go.Heatmap(z=AN.values, x=MONTHS, y=ylab, colorscale="RdBu_r", zmid=0, zmin=-lim, zmax=lim,
-                        colorbar=dict(title=f"{T['anom']} (%)"), customdata=custom, text=Z.values, xgap=1, ygap=1,
-                        hovertemplate=(f"<b>%{{x}} %{{y}}</b><br>{T['anom']}: %{{z:+.0f}} %<br>"
-                                       f"{T['focos']}: %{{text:,.0f}}<br>{T['median']}: %{{customdata[0]:,.0f}}<br>"
-                                       f"{T['source']}: %{{customdata[2]}}<extra></extra>"))
-    fig = go.Figure(hm)
-    terra = mt[mt.source == "Terra"]
-    part = mt[mt.partial]
-    if len(terra):
-        fig.add_trace(go.Scatter(x=[MONTHS[m - 1] for m in terra.month], y=terra.year.astype(str), mode="markers",
-                                 marker=dict(symbol="x-thin", size=8, line=dict(width=1.5, color="white")),
-                                 hoverinfo="skip", showlegend=False))
-    if len(part):
-        fig.add_trace(go.Scatter(x=[MONTHS[m - 1] for m in part.month], y=part.year.astype(str), mode="markers",
-                                 marker=dict(symbol="circle-open", size=9, line=dict(width=1.5, color="#333")),
-                                 hoverinfo="skip", showlegend=False))
-    fig.update_yaxes(autorange="reversed", type="category", title=T["year"])
-    fig.update_xaxes(side="top")
-    fig.update_layout(height=max(380, 22 * len(years) + 120), margin=dict(l=10, r=10, t=40, b=10),
-                      plot_bgcolor="white")
-    st.plotly_chart(fig, config={"toImageButtonOptions": {"filename": "calendario_focos"}})
-    st.caption(T["cal_note"])
+        a, b, c, d = noticias.GAZ["Luján de Cuyo, Mendoza"]
+        set_zone(shapely.to_wkt(box(c, a, d, b)), "Luján de Cuyo, Mendoza", "Luján de Cuyo")
+st.session_state.setdefault("map_v", 0)
 
-# ------------------------------------------------------------------ 2. mes actual vs historia
-with tabs[1]:
-    opts = [(y, m) for y in range(DMAX.year, REF_START - 1, -1) for m in range(12, 0, -1)
-            if dt.date(y, m, 1) <= DMAX]
-    ym = st.selectbox(T["cmp_pick"], opts, format_func=lambda t: f"{MONTHS[t[1] - 1]} {t[0]}")
-    y, m = ym
-    C = compare_month(daily, y, m, DMAX, REF)
-    st.caption(T["cmp_days"].format(d=C["D"]))
-    a1, a2, a3, a4 = st.columns(4)
-    a1.metric(T["cmp_cur"], fmt(C["cur"]), None if np.isnan(C["anom"]) else f"{C['anom']:+.0f} %", delta_color="inverse")
-    a2.metric(T["cmp_med"].format(a=REF[0], b=REF[1]), fmt(C["med"]))
-    a3.metric(T["cmp_pct"], "–" if np.isnan(C["pct"]) else f"P{C['pct']:.0f}")
-    a4.metric(T["cmp_rank"], T["cmp_rank_v"].format(r=C["rank"], n=C["n"]))
+# ================================================================== 1. CABECERA
+h1, h2 = st.columns([10, 1], vertical_alignment="top")
+with h1:
+    st.markdown(f"""
+<div class="fc-hero">{LOGO.replace('{s}', '86')}
+<div><div class="fc-name"><span>Fire</span>chron</div>
+<div class="fc-tag">{tr('Calendario histórico armonizado <i>y</i> pronóstico estacional de fuego',
+                         'Harmonized fire history calendar <i>and</i> seasonal fire outlook')}
+<i>· MODIS + VIIRS, 2000–2026</i></div>
+<div class="fc-team">{tr('Equipo', 'Team')} <b>BurnInHell</b> · NASA Space Apps Challenge 2026 · Mendoza, Argentina</div></div></div>
+<div class="fc-pitch">{tr('Convertimos <b>25 años de satélites de la NASA</b> en un calendario simple: <b>cuándo y dónde se quema Sudamérica</b>, cómo viene este mes y qué esperar en los <b>próximos 3 meses</b>.',
+                          'We turn <b>25 years of NASA satellite data</b> into a simple calendar: <b>when and where South America burns</b>, how this month compares and what to expect over the <b>next 3 months</b>.')}</div>
+""", unsafe_allow_html=True)
+with h2:
+    with st.popover("☰", width="stretch"):
+        lang = st.segmented_control(tr("Idioma", "Language"), ["Español", "English"],
+                                    default="Español" if L == "es" else "English")
+        if lang and (("es" if lang == "Español" else "en") != L):
+            st.session_state.lang = "es" if lang == "Español" else "en"
+            st.rerun()
+        st.markdown(tr("**Firechron** es un proyecto del equipo BurnInHell para el NASA Space Apps Challenge 2026. "
+                       "No es una herramienta oficial de NASA.",
+                       "**Firechron** is a project by team BurnInHell for the NASA Space Apps Challenge 2026. "
+                       "Not an official NASA tool."))
+        st.markdown("[GitHub](https://github.com/lautarodiazopazo/firecal)")
 
-    col1, col2 = st.columns(2)
-    # acumulado diario
-    mlen = pd.Period(f"{y}-{m:02d}").days_in_month
-    cums = []
-    for yy in range(REF[0], REF[1] + 1):
-        if yy == y:
-            continue
-        s = daily[(daily.year == yy) & (daily.month == m)].set_index("day").focos.reindex(range(1, mlen + 1)).fillna(0)
-        cums.append(s.cumsum().values)
-    cums = np.array(cums)
-    dd = np.arange(1, mlen + 1)
-    q25, q50, q75 = np.percentile(cums, [25, 50, 75], axis=0)
-    cur = daily[(daily.year == y) & (daily.month == m) & (daily.day <= C["D"])].set_index("day").focos.cumsum()
-    f2 = go.Figure()
-    f2.add_trace(go.Scatter(x=np.r_[dd, dd[::-1]], y=np.r_[q75, q25[::-1]], fill="toself", line=dict(width=0),
-                            fillcolor="rgba(120,120,120,0.25)", name=T["iqr"], hoverinfo="skip"))
-    f2.add_trace(go.Scatter(x=dd, y=q50, line=dict(color="#555", dash="dash"),
-                            name=T["cmp_med"].format(a=REF[0], b=REF[1])))
-    f2.add_trace(go.Scatter(x=cur.index, y=cur.values, line=dict(color=C_CUR, width=3),
-                            name=f"{MONTHS[m - 1]} {y}"))
-    f2.update_layout(title=T["cum_title"], xaxis_title=T["day"], yaxis_title=T["focos"], height=380,
-                     legend=dict(orientation="h", y=-0.25), margin=dict(l=10, r=10, t=50, b=10),
-                     hovermode="x unified")
-    col1.plotly_chart(f2)
-    # barras por año
-    vy = pd.Series(C["vals"]).sort_index()
-    vy.loc[y] = C["cur"]
-    vy = vy.sort_index()
-    f3 = go.Figure(go.Bar(x=vy.index, y=vy.values, marker_color=[C_CUR if k == y else "#B0B7C3" for k in vy.index],
-                          hovertemplate="%{x}: %{y:,.0f}<extra></extra>"))
-    f3.add_hline(y=C["med"], line_dash="dash", line_color="#555",
-                 annotation_text=T["cmp_med"].format(a=REF[0], b=REF[1]), annotation_position="top left")
-    f3.update_layout(title=f"{T['bars_title']} ({MONTHS[m - 1]} 1–{C['D']})", yaxis_title=T["focos"], height=380,
-                     margin=dict(l=10, r=10, t=50, b=10))
-    col2.plotly_chart(f3)
+# ================================================================== 2. INSTRUCTIVO
+st.markdown(f"""
+<div class="fc-steps">
+ <div class="fc-step"><div class="ic">📍</div><div class="tx"><b>{tr('PASO 1', 'STEP 1')}</b>{tr('Buscá un lugar o dibujá una zona', 'Search a place or draw an area')}</div></div>
+ <div class="fc-step"><div class="ic">🕐</div><div class="tx"><b>{tr('PASO 2', 'STEP 2')}</b>{tr('Elegí: ver la historia o el pronóstico', 'Choose: history or outlook')}</div></div>
+ <div class="fc-step"><div class="ic">👆</div><div class="tx"><b>{tr('PASO 3', 'STEP 3')}</b>{tr('Tocá un mes del calendario: datos y noticias', 'Tap a month: numbers and news')}</div></div>
+ <div class="fc-step"><div class="ic">⬇️</div><div class="tx"><b>{tr('PASO 4', 'STEP 4')}</b>{tr('Descargá los datos en CSV', 'Download the data as CSV')}</div></div>
+</div>""", unsafe_allow_html=True)
 
-# ------------------------------------------------------------------ 3. estacionalidad
-with tabs[2]:
-    full = daily.groupby(["year", "month"], as_index=False).focos.sum()
-    ref_m = full[(full.year >= REF[0]) & (full.year <= REF[1])]
-    q = ref_m.groupby("month").focos.quantile([0.25, 0.5, 0.75]).unstack()
-    yrs = sorted(full.year.unique(), reverse=True)
-    hy = st.selectbox(T["seas_year"], yrs, index=0)
-    f4 = go.Figure()
-    f4.add_trace(go.Scatter(x=MONTHS + MONTHS[::-1], y=np.r_[q[0.75].values, q[0.25].values[::-1]], fill="toself",
-                            fillcolor="rgba(224,123,57,0.25)", line=dict(width=0), name=T["iqr"], hoverinfo="skip"))
-    f4.add_trace(go.Scatter(x=MONTHS, y=q[0.5].values, line=dict(color=C_VIIRS, width=3), name=T["median"]))
-    hy_s = full[full.year == hy].set_index("month").focos.reindex(range(1, 13))
-    f4.add_trace(go.Scatter(x=MONTHS, y=hy_s.values, line=dict(color=C_CUR, width=2), mode="lines+markers",
-                            name=str(hy)))
-    f4.update_layout(title=T["seas_title"].format(a=REF[0], b=REF[1]), yaxis_title=T["focos"], height=420,
-                     hovermode="x unified", legend=dict(orientation="h", y=-0.15), margin=dict(l=10, r=10, t=50, b=10))
-    st.plotly_chart(f4)
+# ================================================================== 3. PANEL PRINCIPAL
+colL, colM, colR = st.columns([1.15, 2.1, 1.05], gap="medium")
 
-# ------------------------------------------------------------------ 4. serie anual
-with tabs[3]:
-    show_raw = st.checkbox(T["ann_raw"], value=True)
-    ya = mt.groupby("year").agg(focos=("focos", "sum"), crudo=("crudo", "sum"), ndays=("ndays", "sum")).reset_index()
-    ya["full"] = [nd >= (366 if pd.Timestamp(f"{yy}-12-31").is_leap_year else 365) for yy, nd in zip(ya.year, ya.ndays)]
-    ya["color"] = [C_MODIS if yy < 2012 else C_VIIRS for yy in ya.year]
-    ya.loc[ya.year <= 2002, "color"] = "#A9C6EE"
-    ya.loc[~ya.full, "color"] = "#D0D0D0"
-    note = np.where(ya.full, "", T["partial_y"]).astype(object)
-    note[ya.year.values <= 2002] = note[ya.year.values <= 2002] + " · " + T["terra_y"]
-    f5 = go.Figure(go.Bar(x=ya.year, y=ya.focos, marker_color=ya.color, name=T["harm"],
-                          customdata=note,
-                          hovertemplate="%{x}: %{y:,.0f} %{customdata}<extra></extra>"))
-    if show_raw:
-        f5.add_trace(go.Scatter(x=ya.year, y=ya.crudo, mode="lines+markers", line=dict(color=C_RAW, dash="dot"),
-                                name=T["raw"]))
-    f5.add_vline(x=2011.5, line_dash="dot", line_color="#888", annotation_text="MODIS → VIIRS",
-                 annotation_position="top")
-    f5.update_layout(title=T["ann_title"], yaxis_title=T["focos"], height=420, legend=dict(orientation="h", y=-0.15),
-                     margin=dict(l=10, r=10, t=50, b=10))
-    st.plotly_chart(f5)
-    st.caption(T["ann_note"])
+# ---------- 01 Área
+with colL:
+    with st.container(key="card_area"):
+        card_title("01", tr("Área de interés", "Area of interest"),
+                   tr("Escribí el nombre de un **lugar** (departamento, ciudad, provincia, parque…) o **dibujá** "
+                      "un rectángulo o polígono en el mapa con los botones ▭ ⬠ de la izquierda. "
+                      "Se analiza **una zona por vez**: si dibujás otra, reemplaza a la anterior.",
+                      "Type a **place** name (district, city, province, park…) or **draw** a rectangle or polygon "
+                      "on the map with the ▭ ⬠ buttons. **One area at a time**: a new drawing replaces the previous one."))
+        q = st.text_input(tr("Buscar lugar", "Search place"), placeholder=tr("🔍  Ej.: Luján de Cuyo", "🔍  e.g. Pantanal"),
+                          label_visibility="collapsed", key="q")
+        if q:
+            res = buscar(q, L)
+            if not res:
+                st.caption(tr("No encontré ese lugar. Probá con otro nombre o dibujalo en el mapa.",
+                              "Place not found. Try another name or draw it on the map."))
+            else:
+                labels = [r[0] for r in res]
+                pick = st.selectbox(tr("Resultados", "Results"), range(len(res)), format_func=lambda i: labels[i],
+                                    label_visibility="collapsed", key=f"pick_{q}")
+                if st.session_state.get("applied_q") != (q, pick):
+                    st.session_state.applied_q = (q, pick)
+                    set_zone(res[pick][1], res[pick][0], res[pick][2])
+        how = st.segmented_control(tr("Otras formas", "Other ways"),
+                                   [tr("📍 Dibujar en mapa", "📍 Draw on map"), tr("Coordenadas", "Coordinates"),
+                                    tr("Ejemplos", "Examples")], label_visibility="collapsed", key="how")
+        if how == tr("📍 Dibujar en mapa", "📍 Draw on map"):
+            st.caption(tr("Usá ▭ (rectángulo) o ⬠ (polígono) arriba a la izquierda del mapa.",
+                          "Use ▭ (rectangle) or ⬠ (polygon) at the top-left of the map."))
+        elif how == tr("Coordenadas", "Coordinates"):
+            c1, c2 = st.columns(2)
+            la0 = c1.number_input(tr("Lat. mín.", "Min lat"), -60.0, 15.0, -33.6, 0.1)
+            la1 = c2.number_input(tr("Lat. máx.", "Max lat"), -60.0, 15.0, -32.9, 0.1)
+            lo0 = c1.number_input(tr("Lon. mín.", "Min lon"), -85.0, -30.0, -69.75, 0.1)
+            lo1 = c2.number_input(tr("Lon. máx.", "Max lon"), -85.0, -30.0, -68.75, 0.1)
+            if st.button(tr("Usar estas coordenadas", "Use these coordinates"), width="stretch"):
+                if la1 > la0 and lo1 > lo0:
+                    set_zone(shapely.to_wkt(box(lo0, la0, lo1, la1)), f"{la0}, {lo0} → {la1}, {lo1}", "")
+                else:
+                    st.warning(tr("El mínimo tiene que ser menor que el máximo.", "Min must be lower than max."))
+        elif how == tr("Ejemplos", "Examples"):
+            ex = st.selectbox(tr("Zona de ejemplo", "Example area"), ["—"] + list(PRESETS), key="ex")
+            if ex != "—" and st.session_state.get("applied_ex") != ex:
+                st.session_state.applied_ex = ex
+                if PRESETS[ex] is None:
+                    r = [x for x in buscar("Mendoza", "es") if x[0].startswith("Mendoza")]
+                    set_zone(r[0][1], "Mendoza, Argentina", "Mendoza")
+                else:
+                    a, b, c, d = PRESETS[ex]
+                    set_zone(shapely.to_wkt(box(c, a, d, b)), ex, ex.split(" (")[0].split(",")[0])
+        st.markdown(f"<div class='fc-legend'>{tr('Zona', 'Area')}: <b>{st.session_state.zone['label']}</b></div>",
+                    unsafe_allow_html=True)
 
-# ------------------------------------------------------------------ 5. mapa
-with tabs[4]:
+# ---------- 02 Modo
+with colL:
+    with st.container(key="card_mode"):
+        card_title("02", tr("Modo: histórico / pronóstico", "Mode: history / outlook"),
+                   tr("**Ver histórico**: lo que vieron los satélites entre 2000 y hoy.\n\n"
+                      "**Predecir temporada**: un modelo de inteligencia artificial estima, para los próximos 3 meses, "
+                      "la probabilidad de que haya **más fuego que en un mes normal** en tu zona.",
+                      "**History**: what the satellites saw from 2000 to today.\n\n"
+                      "**Outlook**: a machine-learning model estimates, for the next 3 months, the chance of "
+                      "**more fire than in a normal month** in your area."))
+        modo_opts = [tr("Ver histórico (2000–2026)", "History (2000–2026)"), tr("Predecir temporada (+3 meses)", "Outlook (+3 months)")]
+        modo = st.segmented_control(tr("Modo", "Mode"), modo_opts, default=modo_opts[0], key="modo",
+                                    label_visibility="collapsed") or modo_opts[0]
+        FORECAST = modo == modo_opts[1] and PRON is not None
+        years_all = list(range(DMIN.year, DMAX.year + 1))
+        y0, y1 = st.select_slider(tr("Años", "Years"), options=years_all, value=(years_all[0], years_all[-1]), key="yrs")
+        D0, D1 = max(dt.date(y0, 1, 1), DMIN), min(dt.date(y1, 12, 31), DMAX)
+        if FORECAST:
+            fmonths = PRON[["year", "month", "lead"]].drop_duplicates().sort_values("lead").values.tolist()
+            fsel = st.segmented_control(tr("Mes a pronosticar", "Month to forecast"), list(range(len(fmonths))),
+                                        format_func=lambda i: f"{MONTHS[fmonths[i][1] - 1]} {fmonths[i][0]}",
+                                        default=0, key="fsel") or 0
+            FY, FM, FL = fmonths[fsel]
+        cmode = st.segmented_control(tr("Calendario", "Calendar"), [tr("Cantidad de focos", "Hotspot count"),
+                                                                    tr("Comparado con lo normal", "Vs. normal")],
+                                     default=tr("Cantidad de focos", "Hotspot count"), key="cmode") \
+            or tr("Cantidad de focos", "Hotspot count")
+        ANOM = cmode != tr("Cantidad de focos", "Hotspot count")
+        ramp = st.selectbox(tr("Rampa de color", "Color ramp"), list(RAMPS), index=0, key="ramp",
+                            disabled=ANOM, help=tr("En «comparado con lo normal» siempre: azul = menos fuego, rojo = más fuego.",
+                                                   "In «vs. normal» mode always: blue = less fire, red = more fire."))
+
+# ---------- cálculos de la zona
+GEOM = shapely.from_wkt(st.session_state.zone["wkt"])
+WKT = st.session_state.zone["wkt"]
+daily, small, nrows = zone_daily(WKT)
+HAS = nrows > 0 and daily.focos.sum() > 0
+if HAS:
+    mt, clim, full = monthly_table(daily, D0, D1, REF)
     cells = zone_cells(WKT, D0, D1)
     agg = cells.groupby(["g_r", "g_c"], as_index=False).focos.sum()
-    agg = agg[agg.focos > 0].sort_values("focos").tail(40000)
-    if len(agg):
-        agg["lat"], agg["lon"] = (agg.g_r + 0.5) * GRID, (agg.g_c + 0.5) * GRID
-        minx, miny, maxx, maxy = geom.bounds
-        span = max(maxx - minx, (maxy - miny) * 1.3, 0.2)
-        f6 = go.Figure(go.Scattermap(
-            lat=agg.lat, lon=agg.lon, mode="markers",
-            marker=dict(size=7, color=np.log10(1 + agg.focos), colorscale=RAMPS[ramp], opacity=0.85,
-                        colorbar=dict(title=T["focos"], tickvals=[np.log10(1 + v) for v in [1, 10, 100, 1000, 10000]],
-                                      ticktext=["1", "10", "100", "1.000", "10.000"])),
-            text=[fmt(v) for v in agg.focos], hovertemplate="%{lat:.2f}, %{lon:.2f}<br>%{text}<extra></extra>"))
-        f6.update_layout(map=dict(style="open-street-map", center=dict(lat=(miny + maxy) / 2, lon=(minx + maxx) / 2),
-                                  zoom=max(1, min(10, math.log2(360 / span) - 0.6))),
-                         height=560, margin=dict(l=0, r=0, t=30, b=0), title=T["map_title"])
-        st.plotly_chart(f6)
-    else:
-        st.info(T["no_data"])
+    agg = agg[agg.focos > 0]
+    provs, ctrs = noticias.places_for((agg.g_r + 0.5) * GRID, (agg.g_c + 0.5) * GRID, agg.focos)
+else:
+    mt = pd.DataFrame(columns=["year", "month", "focos", "crudo", "median", "anom", "source", "partial"])
+    clim, full, agg, provs, ctrs = pd.Series(dtype=float), pd.DataFrame(), pd.DataFrame(), [], []
+short = st.session_state.zone.get("short") or ""
+PLACES = tuple(([short] if short else []) + [p for p, _ in provs if p != short])
+COUNTRIES = tuple(ctrs or ["Argentina"])
 
-# ------------------------------------------------------------------ 6. noticias
-with tabs[5]:
-    st.caption(T["n_intro"])
-    cells_n = zone_cells(WKT, D0, D1)
-    agg_n = cells_n.groupby(["g_r", "g_c"], as_index=False).focos.sum()
-    provs, ctrs = noticias.places_for((agg_n.g_r + 0.5) * GRID, (agg_n.g_c + 0.5) * GRID, agg_n.focos)
-    if provs or ctrs:
-        st.markdown(f"**{T['n_places']}:** " + ", ".join(f"{p} ({noticias.COUNTRY_ES.get(c, c)})" for p, c in provs)
-                    + ("" if provs else ", ".join(noticias.COUNTRY_ES.get(c, c) for c in ctrs)))
+# pronóstico de la zona
+if FORECAST:
+    pz = PRON[(PRON.year == FY) & (PRON.month == FM)]
+    minx, miny, maxx, maxy = GEOM.bounds
+    pz = pz[(pz.lon >= minx - 0.25) & (pz.lon <= maxx + 0.25) & (pz.lat >= miny - 0.25) & (pz.lat <= maxy + 0.25)]
+    sq = shapely.box(pz.lon - 0.25, pz.lat - 0.25, pz.lon + 0.25, pz.lat + 0.25)
+    pz = pz[shapely.intersects(GEOM, sq)] if len(pz) else pz
+
+    def zone_prob(y, m):
+        p = PRON[(PRON.year == y) & (PRON.month == m)]
+        p = p.merge(pz[["lat", "lon"]], on=["lat", "lon"])
+        act = p[p.p_clim > 0]
+        p = act if len(act) else p
+        return (float(p.prob.mean()), float(p.p_clim.mean())) if len(p) else (np.nan, np.nan)
+
+# ---------- MAPA
+with colM:
+    fmap = folium.Map(location=[-33, -66], zoom_start=4, tiles="OpenStreetMap", control_scale=True,
+                      scrollWheelZoom=False, prefer_canvas=True)
+    fmap.get_root().header.add_child(folium.Element(
+        "<style>.leaflet-container{background:#07173F}"
+        ".leaflet-tile-pane{filter:invert(1) hue-rotate(200deg) brightness(.75) contrast(1.1) saturate(.6)}"
+        ".fc-zone{filter:drop-shadow(0 0 6px rgba(234,254,7,.8))}</style>"))
+    fg = folium.FeatureGroup(name="zona").add_to(fmap)
+    folium.GeoJson(shapely.geometry.mapping(GEOM), style_function=lambda _: {
+        "color": YELLOW, "weight": 2.5, "fillColor": YELLOW, "fillOpacity": 0.10, "className": "fc-zone"}).add_to(fg)
+    if FORECAST and len(pz):
+        feats = [{"type": "Feature", "geometry": shapely.geometry.mapping(shapely.box(r.lon - .25, r.lat - .25, r.lon + .25, r.lat + .25)),
+                  "properties": {"c": ramp_color(PROB_RAMP, r.prob),
+                                 "t": tr(f"Prob. de más fuego que lo normal: {r.prob * 100:.0f} %",
+                                         f"Chance of above-normal fire: {r.prob * 100:.0f}%")}}
+                 for r in pz.itertuples()]
+        folium.GeoJson({"type": "FeatureCollection", "features": feats},
+                       style_function=lambda f: {"color": f["properties"]["c"], "weight": 0.5, "fillColor": f["properties"]["c"],
+                                                 "fillOpacity": 0.55},
+                       tooltip=folium.GeoJsonTooltip(["t"], labels=False)).add_to(fmap)
+    elif HAS and len(agg):
+        pts = agg.copy()
+        if len(pts) > MAX_MAP_POINTS:  # agregamos a celdas más grandes para no saturar el mapa
+            k = int(math.ceil(math.sqrt(len(pts) / MAX_MAP_POINTS)))
+            pts["g_r"], pts["g_c"] = pts.g_r // k * k, pts.g_c // k * k
+            pts = pts.groupby(["g_r", "g_c"], as_index=False).focos.sum()
+            cell = GRID * k
+        else:
+            cell = GRID
+        pts["lat"], pts["lon"] = (pts.g_r + 0.5 * cell / GRID) * GRID, (pts.g_c + 0.5 * cell / GRID) * GRID
+        lv = np.sqrt(pts.focos.values)
+        vmax = max(np.percentile(lv, 99), 1e-6)
+        pts = pts.assign(v=np.clip(lv / vmax, 0, 1)).sort_values("v")
+        feats = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [r.lon, r.lat]},
+                  "properties": {"c": ramp_color(RAMPS[ramp] if not ANOM else FIRE_RAMP, 0.25 + 0.75 * r.v),
+                                 "r": 2 + 6 * r.v, "t": f"{fmt(r.focos)} {tr('focos', 'hotspots')}"}}
+                 for r in pts.itertuples()]
+        folium.GeoJson({"type": "FeatureCollection", "features": feats},
+                       marker=folium.CircleMarker(),
+                       style_function=lambda f: {"radius": f["properties"]["r"], "color": f["properties"]["c"],
+                                                 "weight": 0, "fillColor": f["properties"]["c"], "fillOpacity": 0.85},
+                       tooltip=folium.GeoJsonTooltip(["t"], labels=False)).add_to(fmap)
+    minx, miny, maxx, maxy = GEOM.bounds
+    fmap.fit_bounds([[miny, minx], [maxy, maxx]], padding=(20, 20))
+    Draw(export=False, feature_group=fg, position="topleft",
+         draw_options={"polyline": False, "circle": False, "marker": False, "circlemarker": False,
+                       "polygon": {"shapeOptions": {"color": YELLOW}}, "rectangle": {"shapeOptions": {"color": YELLOW}}},
+         edit_options={"edit": False, "remove": False}).add_to(fmap)
+    one = MacroElement()
+    one._template = Template("""{% macro script(this, kwargs) %}
+        {{ this._parent.get_name() }}.on('draw:drawstart', function(){ %s.clearLayers(); });
+    {% endmacro %}""".replace("%s", fg.get_name()))
+    fmap.add_child(one)
+    out = st_folium(fmap, height=470, use_container_width=True, key=f"map{st.session_state.map_v}",
+                    returned_objects=["last_active_drawing"])
+    if out and out.get("last_active_drawing"):
+        g = out["last_active_drawing"].get("geometry")
+        sig = json.dumps(g, sort_keys=True)
+        if g and g.get("type") in ("Polygon", "MultiPolygon") and st.session_state.get("last_draw") != sig:
+            st.session_state.last_draw = sig
+            set_zone(shapely.to_wkt(shape(g), rounding_precision=4), tr("Zona dibujada", "Drawn area"), "")
+            st.rerun()
+    lc1, lc2 = st.columns([3, 1], vertical_alignment="center")
+    if FORECAST:
+        grad = "linear-gradient(90deg," + ",".join(c for _, c in PROB_RAMP) + ")"
+        lc1.markdown(f"<div class='fc-legend'>{tr('Probabilidad de más fuego que lo normal', 'Chance of above-normal fire')}: "
+                     f"0 %<span class='fc-sw' style='background:{grad}'></span>100 % · {tr('cuadros de ~50 km', '~50 km squares')}</div>",
+                     unsafe_allow_html=True)
     else:
-        st.info(T["n_none_places"])
-    extra = st.text_input(T["n_extra"], placeholder="ej.: Córdoba sierras" if L == "es" else "e.g. Pantanal")
-    # meses candidatos: dentro del rango y desde 2017, ordenados por anomalía
-    cand = mt[(mt.year >= noticias.GDELT_START.year)].copy()
-    cand["exceso"] = cand.focos - cand["median"].fillna(0)   # focos por encima de lo normal
-    cand = cand.sort_values(["exceso", "focos"], ascending=False)
-    labels = {(int(r.year), int(r.month)): f"{MONTHS[int(r.month) - 1]} {int(r.year)}"
-              + ("" if np.isnan(r.anom) else f" ({r.anom:+.0f} %)") for r in cand.itertuples()}
-    keys = list(labels)
-    if (D1 - D0).days <= 92 and D1 >= noticias.GDELT_START:
-        default = [k for k in keys if dt.date(k[0], k[1], 1) <= D1][:3]
+        grad = "linear-gradient(90deg," + ",".join(c for _, c in FIRE_RAMP[1:]) + ")"
+        lc1.markdown(f"<div class='fc-legend'>{tr('Cada punto = un área de ~11 km', 'Each dot = a ~11 km area')} · "
+                     f"{tr('pocos', 'few')}<span class='fc-sw' style='background:{grad}'></span>{tr('muchos focos', 'many hotspots')} "
+                     f"({D0.year}–{D1.year})</div>", unsafe_allow_html=True)
+    if lc2.button("🗑 " + tr("Borrar zona", "Clear area"), width="stretch"):
+        st.session_state.map_v += 1
+        st.session_state.pop("last_draw", None)
+        st.session_state.zone = {"wkt": shapely.to_wkt(box(-82, -56, -34, 13)), "label": tr("Sudamérica completa", "All of South America"), "short": ""}
+        st.rerun()
+
+# ---------- KPIs
+with colR:
+    if not HAS:
+        st.info(tr("No hay focos registrados en esta zona.", "No hotspots recorded in this area."))
+    elif FORECAST:
+        p, pc_ = zone_prob(FY, FM)
+        hist_m = full[(full.month == FM) & (full.year >= REF[0]) & (full.year <= REF[1])].focos
+        diff = p - pc_
+        verdict, cls = ((tr("Más fuego de lo normal", "Above normal"), "up") if diff > 0.08 else
+                        (tr("Menos fuego de lo normal", "Below normal"), "down") if diff < -0.08 else
+                        (tr("Dentro de lo normal", "About normal"), "ok"))
+        st.markdown(f"""<div class="fc-kpis">
+<div class="fc-kpi"><div class="l">{tr('Pronóstico para', 'Outlook for')} {MONTHS_L[FM - 1]} {FY}</div><div class="v {cls}" style="font-size:1.55rem">{verdict}</div></div>
+<div class="fc-kpi"><div class="l">{tr('Probabilidad de un mes con más fuego que lo normal', 'Chance of a month with above-normal fire')}</div><div class="v">{p * 100:.0f} %</div></div>
+<div class="fc-kpi"><div class="l">{tr('Lo habitual (2003–2019)', 'Usual (2003–2019)')}</div><div class="v">{pc_ * 100:.0f} %</div><div class="l">{tr('de los años', 'of years')}</div></div>
+<div class="fc-kpi"><div class="l">{tr('Focos en un', 'Hotspots in a typical')} {MONTHS_L[FM - 1]} {tr('típico', '')}</div><div class="v">{fmt(hist_m.median())}</div></div>
+</div>""", unsafe_allow_html=True)
+        help_pop(tr("**¿Qué predice el modelo?** Si el mes elegido va a tener **más focos que la mediana** de ese mismo "
+                    "mes en 2003–2019, en cuadros de ~50 km.\n\n**¿Con qué?** Con la historia de fuego reciente de la zona y "
+                    "de sus vecinos, el clima (ERA5-Land) y El Niño/La Niña (índice ONI).\n\n**¿Qué tan confiable es?** "
+                    "Evaluado en 2023–2025, años que no vio al entrenar: acierta en **~7 de cada 10** casos a 1 mes y "
+                    "**~2 de cada 3** a 3 meses. Usar sólo «lo habitual» acierta ~6 de cada 10.\n\n"
+                    "Es una **orientación** para prepararse, no una certeza.",
+                    "**What does it predict?** Whether the chosen month will have **more hotspots than the median** of "
+                    "that month in 2003–2019, in ~50 km squares.\n\n**Using?** Recent fire history of the area and its "
+                    "neighbors, climate (ERA5-Land) and El Niño/La Niña (ONI index).\n\n**How reliable?** Tested on "
+                    "2023–2025 (unseen in training): right **~7 in 10** times at 1 month and **~2 in 3** at 3 months. "
+                    "Using only «the usual» is right ~6 in 10.\n\nIt is **guidance** to prepare, not a certainty."),
+                 tr("? ¿Cómo leer esto?", "? How to read this"))
     else:
-        default = keys[:3]
-    sel_months = st.multiselect(T["n_months"], keys, default=default, max_selections=3,
-                                format_func=lambda k: labels[k])
-    if D0 < noticias.GDELT_START:
-        st.caption(T["n_pre2017"])
-    if st.button(T["n_btn"], type="primary"):
-        places = [p for p, _ in provs] + ctrs
-        q = noticias.gdelt_query(places, extra)
-        res = {"press": [], "errors": [], "wiki": []}
-        with st.spinner(T["n_wait"]):
-            for i, (yy, mm) in enumerate(sorted(sel_months)):
-                a = max(dt.date(yy, mm, 1), D0)
-                b = min(dt.date(yy, mm, pd.Period(f"{yy}-{mm:02d}").days_in_month), D1)
-                if "rate" in res["errors"]:      # GDELT nos está limitando: no insistir
-                    res["press"].append(((yy, mm), []))
-                    continue
-                if i:
-                    time.sleep(5.5)
-                arts, err = noticias.gdelt_search(q, a, b)
-                res["press"].append(((yy, mm), arts))
-                if err:
-                    res["errors"].append(err)
-            res["wiki"] = noticias.wiki_events(provs, ctrs, D0.year, D1.year)
-        st.session_state["news"] = res
-    res = st.session_state.get("news")
-    if res:
-        c1, c2 = st.columns([3, 2])
-        with c1:
-            st.subheader(T["n_press"])
-            if any(e == "rate" for e in res["errors"]):
-                st.warning(T["n_rate"])
-            elif res["errors"]:
-                st.warning(T["n_err"].format(e=res["errors"][0]))
-            st.caption(T["n_media"])
-            for (yy, mm), arts in res["press"]:
-                raw_n = len(arts)
-                st.markdown(f"**{MONTHS[mm - 1]} {yy}**")
-                if not arts:
-                    st.caption(T["n_empty"])
-                arts = noticias.filtrar_medios(arts, ctrs)
-                if not arts and raw_n:
-                    st.caption(T["n_filtered"].format(n=raw_n))
-                for a in arts:
-                    d = a["date"]
-                    dd = f"{d[6:8]}/{d[4:6]}/{d[:4]}" if len(d) == 8 else ""
-                    st.markdown(f"- [{a['title'] or a['url']}]({a['url']})  \n  <small>{'📍 ' if a.get('origen') == 'local' else '🌐 '}{a['domain']} · {dd} · {a['lang']}</small>",
-                                unsafe_allow_html=True)
-        with c2:
-            st.subheader(T["n_wiki"])
-            if not res["wiki"]:
-                st.caption(T["n_empty"])
-            for a in res["wiki"]:
-                st.markdown(f"- [{a['title']}]({a['url']})  \n  <small>Wikipedia ({a['lang']})</small>",
+        yr = mt.groupby("year").focos.sum()
+        cmp_now = compare_month(daily, DMAX.year, DMAX.month, DMAX, REF)
+        aw, acls = anom_words(cmp_now["anom"])
+        peak = MONTHS_L[int(clim.idxmax()) - 1].capitalize() if clim.max() > 0 else "–"
+        st.markdown(f"""<div class="fc-kpis">
+<div class="fc-kpi"><div class="l">{tr('Focos en el período', 'Hotspots in period')} ({D0.year}–{D1.year})</div><div class="v">{fmt(mt.focos.sum())}</div></div>
+<div class="fc-kpi"><div class="l">{tr('Mes típicamente más activo', 'Typically busiest month')}</div><div class="v">{peak}</div></div>
+<div class="fc-kpi"><div class="l">{tr('Año más activo', 'Busiest year')}</div><div class="v">{int(yr.idxmax()) if len(yr) else '–'}</div><div class="l">{fmt(yr.max()) if len(yr) else ''} {tr('focos', 'hotspots')}</div></div>
+<div class="fc-kpi"><div class="l">{MONTHS_L[DMAX.month - 1].capitalize()} {DMAX.year} {tr('vs. lo normal', 'vs. normal')} <small>(1–{cmp_now['D']})</small></div><div class="v">{fmt(cmp_now['cur'])} <span class="d {acls}">{'' if np.isnan(cmp_now['anom']) else f"({cmp_now['anom']:+.0f} %)"}</span></div><div class="l {acls}">{aw}</div></div>
+</div>""", unsafe_allow_html=True)
+        help_pop(tr("**Foco de calor**: un lugar de ~1 km donde un satélite de la NASA detectó fuego activo en un día. "
+                    "Ya está **armonizado**: cuenta igual aunque lo haya visto un satélite viejo (MODIS) o uno nuevo (VIIRS).\n\n"
+                    "**Lo normal** = la **mediana** de 2003–2025: el valor del medio, la mitad de los años tuvo menos y la otra mitad más.\n\n"
+                    "**+34 %** quiere decir 34 % más focos que en un año normal; **−20 %**, 20 % menos.",
+                    "**Hotspot**: a ~1 km spot where a NASA satellite detected active fire on a given day. It is "
+                    "**harmonized**: it counts the same whether an old (MODIS) or new (VIIRS) satellite saw it.\n\n"
+                    "**Normal** = the **median** of 2003–2025: half the years had less, half had more.\n\n"
+                    "**+34%** means 34% more hotspots than a normal year; **−20%**, 20% fewer."),
+                 tr("? ¿Qué significan estos números?", "? What do these numbers mean?"))
+    if small:
+        st.caption(tr("Zona muy chica: se usan los cuadros de ~11 km que la tocan.", "Very small area: ~11 km cells touching it are used."))
+
+
+# ================================================================== detalle de un mes (ventana)
+def month_detail(y, m):
+    @st.dialog(f"{MONTHS_L[m - 1].capitalize()} {y} · {st.session_state.zone['label']}", width="large")
+    def _dlg():
+        C = compare_month(daily, y, m, DMAX, REF)
+        aw, acls = anom_words(C["anom"])
+        src = source_of(dt.date(y, m, 15))
+        st.markdown(f"""<div class="fc-kpis" style="grid-template-columns:repeat(3,1fr)">
+<div class="fc-kpi"><div class="l">{tr('Focos', 'Hotspots')}{'' if C['D'] >= 28 else f' (1–{C["D"]})'}</div><div class="v">{fmt(C['cur'])}</div></div>
+<div class="fc-kpi"><div class="l">{tr('En un', 'In a normal')} {MONTHS_L[m - 1]} {tr('normal', '')}</div><div class="v">{fmt(C['med'])}</div></div>
+<div class="fc-kpi"><div class="l">{tr('Comparado', 'Compared')}</div><div class="v {acls}" style="font-size:1.35rem">{aw}</div></div></div>""",
+                    unsafe_allow_html=True)
+        st.markdown(tr(f"Fue el **{C['rank']}.º {MONTHS_L[m - 1]} con más fuego** de {C['n']} años registrados.",
+                       f"It was the **#{C['rank']} {MONTHS_L[m - 1]} with most fire** out of {C['n']} years."))
+        if src == "Terra":
+            st.caption(tr("⚠️ En esa época había un solo satélite (Terra): el dato es menos confiable.",
+                          "⚠️ Only one satellite (Terra) back then: less reliable."))
+        vy = pd.Series(C["vals"])
+        vy.loc[y] = C["cur"]
+        vy = vy.sort_index()
+        f = go.Figure(go.Bar(x=vy.index, y=vy.values, marker_color=[RED if k == y else BLUE_L for k in vy.index],
+                             hovertemplate="%{x}: %{y:,.0f}<extra></extra>"))
+        f.add_hline(y=C["med"], line_dash="dash", line_color=WHITE, annotation_text=tr("lo normal", "normal"))
+        st.plotly_chart(style_fig(f, 240, title=tr(f"{MONTHS_L[m - 1].capitalize()} de cada año", f"{MONTHS_L[m - 1]} of each year"),
+                                  showlegend=False), width="stretch")
+        st.markdown(f"#### 📰 {tr('Qué decía la prensa', 'What the press said')}")
+        if not PLACES:
+            st.caption(tr("No hay lugares para buscar.", "No places to search."))
+        else:
+            with st.spinner(tr("Buscando noticias…", "Searching news…")):
+                arts, err = news_for(PLACES, COUNTRIES, y, m, DMAX)
+            if not arts:
+                st.caption(tr("No pudimos conectarnos al buscador de noticias. Probá de nuevo en un rato.",
+                              "Could not reach the news search. Try again later.") if err else
+                           tr("No encontramos notas de ese mes.", "No articles found for that month."))
+            for a in arts:
+                d = a.get("date", "")
+                dd = f"{d[6:8]}/{d[4:6]}/{d[:4]}" if len(d) == 8 else ""
+                st.markdown(f"- [{a['title']}]({a['url']})  \n  <small>{'📍 ' if a.get('origen') == 'local' else ''}{a['domain']} · {dd}</small>",
                             unsafe_allow_html=True)
-        st.caption("Fuentes / Sources: GDELT Project (gdeltproject.org) · Wikipedia (CC BY-SA) · "
-                   "Natural Earth (public domain).")
+            wk = wiki_for(tuple(tuple(p) for p in provs), COUNTRIES, y)
+            if wk:
+                st.markdown(f"**📚 {tr('Eventos destacados', 'Notable events')} ({y})**")
+                for a in wk:
+                    st.markdown(f"- [{a['title']}]({a['url']}) <small>Wikipedia</small>", unsafe_allow_html=True)
+            st.caption(tr(f"Buscamos: {', '.join(PLACES)}. Sólo titulares y enlaces; el contenido es de cada medio. "
+                          "Fuentes: Google News, Wikipedia.",
+                          f"Searched: {', '.join(PLACES)}. Headlines and links only. Sources: Google News, Wikipedia."))
+    _dlg()
 
-# ------------------------------------------------------------------ 7. descargas
+
+# ================================================================== FILA 2: noticias + calendario
+colN, colC = st.columns([1.15, 3.15], gap="medium")
+with colN:
+    with st.container(key="card_news"):
+        card_title("03", tr("Noticias y contexto del lugar", "News and context"),
+                   tr("Mostramos los **lugares** donde hubo más focos en tu zona y los **meses más fuera de lo normal**. "
+                      "Tocá un mes (acá o en el calendario) para ver los números y las **noticias** de ese momento.",
+                      "We show the **places** with most hotspots in your area and the **most unusual months**. "
+                      "Tap a month (here or in the calendar) to see numbers and **news** from that time."))
+        if provs or ctrs:
+            st.markdown(", ".join(f"{p}" for p, _ in provs) or ", ".join(noticias.COUNTRY_ES.get(c, c) for c in ctrs))
+        if HAS and len(mt):
+            cand = mt.assign(exceso=mt.focos - mt["median"].fillna(0)).sort_values("exceso", ascending=False).head(3)
+            st.caption(tr("Meses con más fuego que lo normal:", "Months with most excess fire:"))
+            cc = st.container(key="row_chips").columns(3)
+            for i, r in enumerate(cand.itertuples()):
+                if cc[i].button(f"{MONTHS[int(r.month) - 1]} {int(r.year)}", key=f"chip{i}", width="stretch"):
+                    month_detail(int(r.year), int(r.month))
+
+with colC:
+    with st.container(key="card_cal"):
+        if FORECAST:
+            card_title("📈", tr("Pronóstico de los próximos 3 meses", "Next 3 months outlook"))
+            fc = st.columns(len(fmonths))
+            for i, (yy, mm, ll) in enumerate(fmonths):
+                p, pc_ = zone_prob(yy, mm)
+                col = ramp_color(PROB_RAMP, p) if not np.isnan(p) else "#666"
+                fc[i].markdown(f"""<div class="fc-fc"><div class="m">{MONTHS_L[mm - 1].capitalize()} {yy}</div>
+<div class="l">{tr('Prob. de más fuego que lo normal', 'Chance of above-normal fire')}</div>
+<div class="fc-kpi" style="border:0;padding:0;background:none"><div class="v">{'–' if np.isnan(p) else f'{p * 100:.0f} %'}</div></div>
+<div class="fc-bar"><div style="width:{0 if np.isnan(p) else p * 100:.0f}%;background:{col}"></div></div>
+<div class="l">{tr('Habitual', 'Usual')}: {'–' if np.isnan(pc_) else f'{pc_ * 100:.0f} %'} · {tr('anticipación', 'lead')}: {ll} {tr('mes' if ll == 1 else 'meses', 'month' if ll == 1 else 'months')}</div></div>""",
+                               unsafe_allow_html=True)
+            st.write("")
+        t1, t2 = st.container(key="row_tcal").columns([7, 1], vertical_alignment="center")
+        t1.markdown(f'<div class="fc-ct">{tr("Calendario histórico", "History calendar")} · '
+                    f'<span style="color:{YELLOW}">{tr("tocá un mes", "tap a month")}</span></div>', unsafe_allow_html=True)
+        with t2.popover("?"):
+            st.markdown(tr("Cada **fila es un año** y cada **columna un mes**. El color muestra cuánto fuego detectaron los "
+                           "satélites: **azul oscuro = nada o poco**, **amarillo → rojo = mucho**.\n\n"
+                           "En **«Comparado con lo normal»**: **rojo** = más fuego que en un año normal para ese mes, "
+                           "**azul** = menos.\n\nTocá un cuadrito para ver el detalle y las noticias.",
+                           "Each **row is a year**, each **column a month**. Color shows how much fire the satellites "
+                           "detected: **dark blue = none/little**, **yellow → red = a lot**.\n\nIn **«Vs. normal»**: "
+                           "**red** = more fire than a normal year for that month, **blue** = less.\n\nTap a square for details and news."))
+        if not HAS or not len(mt):
+            st.info(tr("No hay focos en esta zona y período.", "No hotspots in this area and period."))
+        else:
+            years = sorted(mt.year.unique(), reverse=True)
+            ylab = [str(y) for y in years]
+            piv = lambda col: mt.pivot(index="year", columns="month", values=col).reindex(index=years, columns=range(1, 13))
+            Z, MED, AN, PART, SRC = piv("focos"), piv("median"), piv("anom"), piv("partial"), piv("source")
+            zcap = mt.loc[mt.source != "Terra", "focos"].max() if (mt.source != "Terra").any() else mt.focos.max()
+            txt = np.empty(Z.shape, dtype=object)
+            for i in range(Z.shape[0]):
+                for j in range(12):
+                    z = Z.values[i, j]
+                    if np.isnan(z):
+                        txt[i, j] = ""
+                        continue
+                    w, _ = anom_words(AN.values[i, j])
+                    extra = ""
+                    if PART.values[i, j] is True:
+                        extra += "<br>" + tr("(mes incompleto)", "(incomplete month)")
+                    if SRC.values[i, j] == "Terra":
+                        extra += "<br>" + tr("(un solo satélite: menos confiable)", "(single satellite: less reliable)")
+                    txt[i, j] = (f"<b>{MONTHS_L[j].capitalize()} {years[i]}</b><br>{fmt(z)} {tr('focos', 'hotspots')}<br>"
+                                 f"{tr('Lo normal', 'Normal')}: {fmt(MED.values[i, j])}<br>{w}{extra}")
+            if not ANOM:
+                # escala raíz cuadrada: los meses sin fuego quedan azul oscuro y los picos en rojo
+                base = mt.loc[mt.source != "Terra", "focos"] if (mt.source != "Terra").any() else mt.focos
+                zcap = max(float(np.nanpercentile(base, 98)), 1.0)
+                zv = np.sqrt(np.clip(Z.values, 0, zcap))
+                nice = [0, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000]
+                ticks = [v for v in nice if v <= zcap][:: max(1, len([v for v in nice if v <= zcap]) // 5)]
+                hm = go.Heatmap(z=zv, x=MONTHS, y=ylab, colorscale=RAMPS[ramp], zmin=0, zmax=np.sqrt(zcap), xgap=2, ygap=2,
+                                hoverinfo="skip",
+                                colorbar=dict(title=tr("focos", "hotspots"), tickvals=[np.sqrt(v) for v in ticks] + [np.sqrt(zcap)],
+                                              ticktext=[fmt(v) for v in ticks] + ["≥" + fmt(zcap)], orientation="h", y=-0.02,
+                                              yanchor="top", thickness=10, len=0.8))
+            else:
+                lim = max(100, np.nanpercentile(np.abs(AN.values), 95) if np.isfinite(AN.values).any() else 100)
+                hm = go.Heatmap(z=np.clip(AN.values, -100, lim), x=MONTHS, y=ylab, colorscale=ANOM_RAMP, zmin=-100,
+                                zmax=lim, xgap=2, ygap=2, hoverinfo="skip",
+                                colorbar=dict(title=tr("vs. lo normal (%)", "vs. normal (%)"), orientation="h", y=-0.02,
+                                              yanchor="top", thickness=10, len=0.7, ticksuffix=" %"))
+            # capa invisible para poder tocar los cuadritos
+            gx, gy = np.meshgrid(MONTHS, ylab)
+            ok = ~np.isnan(Z.values)
+            hit = go.Scatter(x=gx[ok], y=gy[ok], mode="markers", text=txt[ok], hovertemplate="%{text}<extra></extra>",
+                             marker=dict(symbol="square", size=26, color="rgba(0,0,0,0)", opacity=0.01),
+                             selected=dict(marker=dict(opacity=0.01)), unselected=dict(marker=dict(opacity=0.01)),
+                             showlegend=False)
+            fig = go.Figure([hm, hit])
+            fig.update_yaxes(type="category", autorange="reversed", fixedrange=True)
+            fig.update_xaxes(side="top", fixedrange=True, type="category")
+            style_fig(fig, max(320, 22 * len(years) + 150), clickmode="event+select", dragmode=False,
+                      margin=dict(l=6, r=6, t=30, b=40), hoverlabel=dict(bgcolor=NAVY, bordercolor=YELLOW))
+            ev = st.plotly_chart(fig, width="stretch", on_select="rerun", selection_mode="points",
+                                 key=f"cal_{st.session_state.map_v}",
+                                 config={"displayModeBar": False, "toImageButtonOptions": {"filename": "firechron_calendario"}})
+            pts = (ev or {}).get("selection", {}).get("points", []) if ev else []
+            if pts:
+                p0 = pts[0]
+                try:
+                    sel = (int(p0["y"]), MONTHS.index(p0["x"]) + 1)
+                except (KeyError, ValueError):
+                    sel = None
+                if sel and st.session_state.get("cal_sel") != sel:
+                    st.session_state.cal_sel = sel
+                    month_detail(*sel)
+            else:
+                st.session_state.cal_sel = None
+            with st.expander(tr("¿No podés tocar el calendario? Elegí el mes acá", "Can't tap? Pick the month here")):
+                opts = [(int(r.year), int(r.month)) for r in mt.sort_values(["year", "month"], ascending=False).itertuples()]
+                pk = st.selectbox(tr("Mes", "Month"), opts, format_func=lambda t: f"{MONTHS_L[t[1] - 1].capitalize()} {t[0]}")
+                if st.button(tr("Ver detalle y noticias", "See details and news")):
+                    month_detail(*pk)
+
+# ================================================================== 4. MÁS DETALLE
+st.write("")
+st.markdown(f"### {tr('Explorá más', 'Explore more')}")
+tabs = st.tabs([tr("📍 Este mes vs. otros años", "📍 This month vs. other years"), tr("📈 Temporada típica", "📈 Typical season"),
+                tr("📊 Año por año", "📊 Year by year"), tr("🛰️ Cómo funciona", "🛰️ How it works"),
+                tr("📣 Reportá un fuego", "📣 Report a fire"), tr("⬇️ Descargas", "⬇️ Downloads"),
+                tr("📚 Fuentes y créditos", "📚 Sources and credits")])
+
+if HAS:
+    with tabs[0]:
+        opts = [(y, m) for y in range(DMAX.year, REF_START - 1, -1) for m in range(12, 0, -1) if dt.date(y, m, 1) <= DMAX]
+        y, m = st.selectbox(tr("Mes a analizar", "Month"), opts, format_func=lambda t: f"{MONTHS_L[t[1] - 1].capitalize()} {t[0]}")
+        C = compare_month(daily, y, m, DMAX, REF)
+        aw, acls = anom_words(C["anom"])
+        st.markdown(tr(f"Del 1 al {C['D']} de {MONTHS_L[m - 1]} de {y} hubo **{fmt(C['cur'])} focos**; en un año normal hay "
+                       f"**{fmt(C['med'])}** → <span class='{acls}'><b>{aw}</b></span>. Puesto {C['rank']} de {C['n']} años.",
+                       f"From 1 to {C['D']} {MONTHS_L[m - 1]} {y}: **{fmt(C['cur'])} hotspots**; a normal year has "
+                       f"**{fmt(C['med'])}** → <span class='{acls}'><b>{aw}</b></span>. Rank {C['rank']} of {C['n']} years."),
+                    unsafe_allow_html=True)
+        mlen = pd.Period(f"{y}-{m:02d}").days_in_month
+        cums = np.array([daily[(daily.year == yy) & (daily.month == m)].set_index("day").focos
+                         .reindex(range(1, mlen + 1)).fillna(0).cumsum().values for yy in range(REF[0], REF[1] + 1) if yy != y])
+        dd = np.arange(1, mlen + 1)
+        q25, q50, q75 = np.percentile(cums, [25, 50, 75], axis=0)
+        cur = daily[(daily.year == y) & (daily.month == m) & (daily.day <= C["D"])].set_index("day").focos.cumsum()
+        f2 = go.Figure()
+        f2.add_trace(go.Scatter(x=np.r_[dd, dd[::-1]], y=np.r_[q75, q25[::-1]], fill="toself", line=dict(width=0),
+                                fillcolor="rgba(46,150,245,0.25)", name=tr("Rango normal", "Normal range"), hoverinfo="skip"))
+        f2.add_trace(go.Scatter(x=dd, y=q50, line=dict(color=WHITE, dash="dash"), name=tr("Lo normal", "Normal")))
+        f2.add_trace(go.Scatter(x=cur.index, y=cur.values, line=dict(color=YELLOW, width=3), name=f"{MONTHS[m - 1]} {y}"))
+        st.plotly_chart(style_fig(f2, 380, title=tr("Focos acumulados día a día", "Cumulative hotspots day by day"),
+                                  xaxis_title=tr("Día del mes", "Day of month"), hovermode="x unified",
+                                  legend=dict(orientation="h", y=-0.2)), width="stretch")
+
+    with tabs[1]:
+        ref_m = full[(full.year >= REF[0]) & (full.year <= REF[1])]
+        qq = ref_m.groupby("month").focos.quantile([0.25, 0.5, 0.75]).unstack()
+        hy = st.selectbox(tr("Comparar con el año", "Compare with year"), sorted(full.year.unique(), reverse=True))
+        f4 = go.Figure()
+        f4.add_trace(go.Scatter(x=MONTHS + MONTHS[::-1], y=np.r_[qq[0.75].values, qq[0.25].values[::-1]], fill="toself",
+                                fillcolor="rgba(228,55,0,0.25)", line=dict(width=0), name=tr("Rango normal", "Normal range"), hoverinfo="skip"))
+        f4.add_trace(go.Scatter(x=MONTHS, y=qq[0.5].values, line=dict(color=RED, width=3), name=tr("Mes normal", "Normal month")))
+        hs = full[full.year == hy].set_index("month").focos.reindex(range(1, 13))
+        f4.add_trace(go.Scatter(x=MONTHS, y=hs.values, line=dict(color=YELLOW, width=2), mode="lines+markers", name=str(hy)))
+        st.plotly_chart(style_fig(f4, 400, title=tr("¿En qué meses se quema esta zona?", "When does this area burn?"),
+                                  hovermode="x unified", legend=dict(orientation="h", y=-0.15)), width="stretch")
+
+    with tabs[2]:
+        ya = mt.groupby("year").agg(focos=("focos", "sum"), ndays=("ndays", "sum")).reset_index()
+        ya["full"] = [nd >= (366 if pd.Timestamp(f"{yy}-12-31").is_leap_year else 365) for yy, nd in zip(ya.year, ya.ndays)]
+        f5 = go.Figure(go.Bar(x=ya.year, y=ya.focos, marker_color=[BLUE_L if f else "#5E6C8F" for f in ya.full],
+                              customdata=np.where(ya.full, "", tr(" (año incompleto)", " (incomplete year)")),
+                              hovertemplate="%{x}: %{y:,.0f}%{customdata}<extra></extra>"))
+        f5.add_hline(y=ya[ya.full].focos.median(), line_dash="dash", line_color=WHITE, annotation_text=tr("año normal", "normal year"))
+        st.plotly_chart(style_fig(f5, 400, title=tr("Total de focos por año", "Total hotspots per year"), showlegend=False),
+                        width="stretch")
+        st.caption(tr("Las barras grises son años incompletos (2000 empieza en noviembre; 2026 llega hasta "
+                      f"{DMAX:%d/%m}).", f"Grey bars are incomplete years (2000 starts in November; 2026 runs to {DMAX:%m/%d})."))
+
+    with tabs[3]:
+        st.markdown(tr(
+            "**El problema.** La NASA mira el fuego desde el espacio con dos tipos de satélites: **MODIS** (desde 2000, "
+            "ve cuadros de 1 km) y **VIIRS** (desde 2012, ve cuadros de 375 m: más fino, detecta más fuegos chicos). "
+            "Si se juntan sin más, parece que en 2012 «explotaron» los incendios. Es un efecto del cambio de satélite.\n\n"
+            "**La solución: armonizar.** Contamos el fuego de la misma forma para los dos (cuadros de 1 km por día) y, "
+            "durante los años en que funcionaron juntos (2012–2017), medimos cuánto más ve VIIRS en cada región. "
+            "Con ese factor «traducimos» MODIS a la escala de VIIRS. Lo comprobamos en 2018–2020: el error total es menor al 2 %.\n\n"
+            "**El pronóstico.** Un modelo de aprendizaje automático (LightGBM) aprendió de 2003–2019 cómo la historia "
+            "reciente del fuego, el clima y El Niño anticipan una temporada más activa de lo normal.",
+            "**The problem.** NASA watches fire from space with two kinds of satellites: **MODIS** (since 2000, 1 km "
+            "pixels) and **VIIRS** (since 2012, 375 m pixels: finer, detects more small fires). Simply merged, fires seem "
+            "to «explode» in 2012 — an artifact of the satellite change.\n\n**The fix: harmonize.** We count fire the same "
+            "way for both (1-km cells per day) and, during the years both flew (2012–2017), measure how much more VIIRS "
+            "sees in each region. That factor «translates» MODIS to the VIIRS scale. Checked on 2018–2020: total error "
+            "below 2%.\n\n**The outlook.** A machine-learning model (LightGBM) learned from 2003–2019 how recent fire "
+            "history, climate and El Niño anticipate an above-normal season."))
+        yraw = daily.groupby("year").agg(focos=("focos", "sum"), crudo=("crudo", "sum")).reset_index()
+        yraw = yraw[(yraw.year >= 2003) & (yraw.year < DMAX.year)]
+        f7 = go.Figure()
+        f7.add_trace(go.Scatter(x=yraw.year, y=yraw.crudo, mode="lines+markers", line=dict(color="#8A94AD", dash="dot"),
+                                name=tr("Sin armonizar (salto falso en 2012)", "Not harmonized (false jump in 2012)")))
+        f7.add_trace(go.Scatter(x=yraw.year, y=yraw.focos, mode="lines+markers", line=dict(color=YELLOW, width=3),
+                                name=tr("Firechron (armonizado)", "Firechron (harmonized)")))
+        f7.add_vline(x=2012, line_dash="dot", line_color=WHITE, annotation_text="MODIS → VIIRS")
+        st.plotly_chart(style_fig(f7, 360, title=tr("Antes y después de armonizar (esta zona)", "Before and after harmonizing (this area)"),
+                                  legend=dict(orientation="h", y=-0.2)), width="stretch")
+
+with tabs[4]:
+    st.markdown(tr("¿Viste humo o fuego? **Contanos dónde y cuándo.** Firechron cruza tu reporte con lo que detectaron "
+                   "los satélites cerca de ese lugar y te dice cuándo vuelve a pasar el próximo. "
+                   "*Prototipo: no reemplaza al 911 ni a los bomberos.*",
+                   "Saw smoke or fire? **Tell us where and when.** Firechron cross-checks your report with what satellites "
+                   "detected nearby and tells you when the next one passes. *Prototype: does not replace emergency services.*"))
+    cen = GEOM.representative_point()
+    with st.form("reporte"):
+        c1, c2, c3 = st.columns(3)
+        qu = c1.selectbox(tr("¿Qué viste?", "What did you see?"), [tr("Humo", "Smoke"), tr("Llamas", "Flames"), tr("Zona quemada", "Burned area")])
+        fday = c2.date_input(tr("Fecha", "Date"), value=dt.date.today(), max_value=dt.date.today(), format="DD/MM/YYYY")
+        hora = c3.time_input(tr("Hora aprox.", "Approx. time"), value=dt.time(15, 0))
+        c4, c5 = st.columns(2)
+        rlat = c4.number_input("Lat.", -60.0, 15.0, round(cen.y, 3), 0.01, format="%.3f")
+        rlon = c5.number_input("Lon.", -85.0, -30.0, round(cen.x, 3), 0.01, format="%.3f")
+        com = st.text_input(tr("Comentario (opcional, sin datos personales)", "Comment (optional, no personal data)"), max_chars=200)
+        sent = st.form_submit_button(tr("Enviar reporte", "Send report"), type="primary")
+    if sent:
+        try:
+            new = not os.path.exists(REPORTES)
+            with open(REPORTES, "a", newline="", encoding="utf-8") as fh:
+                w = csv.writer(fh)
+                if new:
+                    w.writerow(["enviado_utc", "fecha", "hora", "tipo", "lat", "lon", "comentario"])
+                w.writerow([dt.datetime.utcnow().isoformat(timespec="seconds"), fday, hora, qu, rlat, rlon, com])
+        except OSError:
+            pass
+        st.success(tr("¡Gracias! Reporte recibido.", "Thanks! Report received."))
+        # 1) archivo histórico de la app (±1 día, ±0,1°)
+        if fday <= DMAX:
+            a_, b_ = np.datetime64(fday - dt.timedelta(days=1), "D").astype(np.int64), np.datetime64(fday + dt.timedelta(days=1), "D").astype(np.int64)
+            gr, gc = math.floor(rlat / GRID), math.floor(rlon / GRID)
+            m_ = ((np.abs(data["g_r"] - gr) <= 1) & (np.abs(data["g_c"] - gc) <= 1) & (data["days"] >= a_) & (data["days"] <= b_))
+            n = float(data["focos"][m_].sum())
+            st.markdown(tr(f"🛰️ **Registro satelital:** {fmt(n)} focos a menos de ~15 km entre el día anterior y el siguiente." if n > 0
+                           else "🛰️ **Registro satelital:** sin focos a menos de ~15 km en esos días (puede ser un fuego chico, nubes o humo sin llama).",
+                           f"🛰️ **Satellite record:** {fmt(n)} hotspots within ~15 km from the day before to the day after." if n > 0
+                           else "🛰️ **Satellite record:** no hotspots within ~15 km on those days (small fire, clouds, or smoke only)."))
+        # 2) FIRMS en tiempo casi real (si hay clave configurada)
+        key = None
+        try:
+            key = st.secrets.get("FIRMS_MAP_KEY")
+        except Exception:  # noqa: BLE001
+            key = os.environ.get("FIRMS_MAP_KEY")
+        if key and fday > DMAX - dt.timedelta(days=9):
+            tot = 0
+            for srcx in ["VIIRS_NOAA20_NRT", "VIIRS_NOAA21_NRT", "MODIS_NRT"]:
+                try:
+                    url = (f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{key}/{srcx}/"
+                           f"{rlon - .15:.3f},{rlat - .15:.3f},{rlon + .15:.3f},{rlat + .15:.3f}/2/{fday:%Y-%m-%d}")
+                    r = requests.get(url, timeout=15)
+                    tot += max(0, len(r.text.strip().splitlines()) - 1)
+                except Exception:  # noqa: BLE001
+                    pass
+            st.markdown(tr(f"🔥 **NASA FIRMS (tiempo casi real):** {tot} detecciones cerca en las últimas 48 h.",
+                           f"🔥 **NASA FIRMS (near real time):** {tot} detections nearby in the last 48 h."))
+        lt = 13.5 - rlon / 15 - 3  # hora local (UTC−3) de la pasada diurna de VIIRS
+        st.info(tr(f"⏱️ Los satélites VIIRS (NOAA-20 y NOAA-21) pasan por ahí cerca de las **{lt:.0f} h** y de la "
+                   f"**{(lt + 12) % 24:.0f} h** (hora argentina, ±1,5 h). Sus detecciones se publican en NASA FIRMS en ~3 horas.",
+                   f"⏱️ VIIRS satellites (NOAA-20, NOAA-21) pass nearby around **{lt:.0f}:00** and **{(lt + 12) % 24:.0f}:00** "
+                   "(UTC−3, ±1.5 h). Detections appear on NASA FIRMS within ~3 hours."))
+
+with tabs[5]:
+    if HAS:
+        st.caption(tr("Cada descarga es un ZIP con el CSV y un LEEME con unidades, método y la cita de NASA FIRMS.",
+                      "Each download is a ZIP with the CSV and a README with units, method and the NASA FIRMS citation."))
+        tag = f"{D0:%Y%m%d}_{D1:%Y%m%d}"
+        units = "harmonized hotspots = 1-km cells with fire per day, VIIRS S-NPP scale"
+        desc_zone = f"Area: {st.session_state.zone['label']}\nWKT (EPSG:4326): {WKT}\nPeriod: {D0} to {D1}"
+        out_m = mt[["year", "month", "focos", "median", "anom", "partial"]].rename(columns={
+            "focos": "focos_armonizados", "median": f"mediana_{REF[0]}_{REF[1]}", "anom": "anomalia_pct",
+            "partial": "mes_incompleto"})
+        st.download_button("⬇️ " + tr("Calendario mensual (CSV)", "Monthly calendar (CSV)"),
+                           zip_bytes(f"firechron_mensual_{tag}", out_m.round(2), desc_zone, units),
+                           file_name=f"firechron_mensual_{tag}.zip", mime="application/zip", type="primary")
+        if st.button(tr("Preparar focos diarios por cuadro de ~11 km", "Prepare daily hotspots per ~11 km cell"), key="p_daily"):
+            c = zone_cells(WKT, D0, D1)
+            dfc = pd.DataFrame({"fecha": c.days.values.astype("datetime64[D]"), "lat": ((c.g_r + 0.5) * GRID).round(2),
+                                "lon": ((c.g_c + 0.5) * GRID).round(2), "focos_armonizados": c.focos.round(3)}
+                               ).sort_values(["fecha", "lat", "lon"])
+            st.session_state["z_daily"] = zip_bytes(f"firechron_diario_0p1_{tag}", dfc, desc_zone, units)
+        if "z_daily" in st.session_state:
+            st.download_button("⬇️ " + tr("Focos diarios (CSV)", "Daily hotspots (CSV)"), st.session_state["z_daily"],
+                               file_name=f"firechron_diario_0p1_{tag}.zip", mime="application/zip", key="d_daily")
+        if pz_ok := (FORECAST and len(pz)):
+            st.download_button("⬇️ " + tr("Pronóstico de la zona (CSV)", "Area outlook (CSV)"),
+                               zip_bytes(f"firechron_pronostico_{FY}{FM:02d}",
+                                         pz[["lat", "lon", "year", "month", "lead", "prob", "p_clim"]].round(4), desc_zone,
+                                         "prob = probability that the month has more hotspots than the 2003-2019 median for that month and 0.5° cell"),
+                               file_name=f"firechron_pronostico_{FY}{FM:02d}.zip", mime="application/zip")
+        minx, miny, maxx, maxy = GEOM.bounds
+        if os.path.exists(DATA_1KM) and st.button(tr("Preparar focos armonizados de 1 km", "Prepare 1-km harmonized hotspots"), key="p_1km"):
+            qd = duckdb.sql(f"""SELECT acq_date AS fecha, CAST(lat AS DOUBLE) lat, CAST(lon AS DOUBLE) lon, fuente,
+                                round(peso, 4) AS focos_armonizados FROM read_parquet('{DATA_1KM}')
+                                WHERE lat BETWEEN {miny} AND {maxy} AND lon BETWEEN {minx} AND {maxx}
+                                  AND acq_date BETWEEN '{D0}' AND '{D1}'""").df()
+            qd = qd[shapely.contains_xy(GEOM, qd.lon.values, qd.lat.values)] if len(qd) else qd
+            if len(qd) <= MAX_RAW_ROWS:
+                st.session_state["z_1km"] = zip_bytes(f"firechron_1km_{tag}", qd.sort_values("fecha"), desc_zone, units)
+            else:
+                st.warning(tr("Demasiados datos: achicá la zona o el período.", "Too much data: reduce area or period."))
+        if "z_1km" in st.session_state:
+            st.download_button("⬇️ 1 km (CSV)", st.session_state["z_1km"], file_name=f"firechron_1km_{tag}.zip",
+                               mime="application/zip", key="d_1km")
+
 with tabs[6]:
-    st.caption(T["dl_intro"])
-    tag = f"{D0:%Y%m%d}_{D1:%Y%m%d}"
-    units = "harmonized hotspots = 1-km cells with fire per day, VIIRS S-NPP scale"
-    desc_zone = f"Area (WKT, EPSG:4326): {WKT}\nPeriod: {D0} to {D1}"
+    st.markdown(tr("""
+**Datos de la NASA (núcleo del proyecto)**
+- **NASA FIRMS** — Fire Information for Resource Management System: focos de calor MODIS Collection 6.1 (Terra y Aqua, 1 km; MCD14ML) y VIIRS 375 m (Suomi NPP — VNP14IMG — y NOAA-20 — VJ114IMG), archivo y tiempo casi real. https://firms.modaps.eosdis.nasa.gov
+- *We acknowledge the use of data and/or imagery from NASA's Fire Information for Resource Management System (FIRMS) (https://earthdata.nasa.gov/firms), part of NASA's Land, Atmosphere Near real-time Capability for Earth observations (LANCE) (https://earthdata.nasa.gov/lance) and NASA's Earth Science Data and Information System (ESDIS).*
 
-    # 1) mensual
-    out_m = mt[["year", "month", "focos", "crudo", "median", "anom", "source", "partial"]].rename(columns={
-        "focos": "focos_armonizados", "crudo": "celdas_dia_sin_armonizar", "median": f"mediana_{REF[0]}_{REF[1]}",
-        "anom": "anomalia_pct", "source": "sensor", "partial": "mes_incompleto"})
-    st.download_button(f"⬇️ {T['dl_month']}", zip_bytes(f"calendario_mensual_{tag}", out_m.round(2), T,
-                                                         desc_zone, units),
-                       file_name=f"calendario_mensual_{tag}.zip", mime="application/zip")
+**Otros datos abiertos**
+- **ERA5-Land monthly** (Copernicus Climate Change Service, ECMWF; Muñoz-Sabater et al., 2021) — licencia CC-BY 4.0. *Contains modified Copernicus Climate Change Service information 2026.*
+- **Índice ONI** (El Niño/La Niña) — NOAA Climate Prediction Center, dominio público.
+- **Natural Earth** admin-1 (límites de provincias) — dominio público.
+- **OpenStreetMap / Nominatim** (buscador de lugares) — © colaboradores de OpenStreetMap, ODbL. Mapa base © OpenStreetMap.
+- **Google News** (feed RSS público) y **GDELT Project** para titulares; **Wikipedia** (CC BY-SA). Sólo se muestran titulares y enlaces.
 
-    # 2) diario por celda 0,1°
-    st.markdown(f"**{T['dl_daily']}**")
-    if st.button(T["dl_prep"], key="p_daily"):
-        c = zone_cells(WKT, D0, D1)
-        dfc = pd.DataFrame({"fecha": c.days.values.astype("datetime64[D]"),
-                            "lat": ((c.g_r + 0.5) * GRID).round(2), "lon": ((c.g_c + 0.5) * GRID).round(2),
-                            "focos_armonizados": c.focos.round(3)}).sort_values(["fecha", "lat", "lon"])
-        st.session_state["z_daily"] = zip_bytes(f"focos_diarios_0p1_{tag}", dfc, T, desc_zone, units)
-        st.caption(T["dl_rows"].format(n=len(dfc)))
-    if "z_daily" in st.session_state:
-        st.download_button(T["dl_get"], st.session_state["z_daily"], file_name=f"focos_diarios_0p1_{tag}.zip",
-                           mime="application/zip", key="d_daily")
+**Software libre:** Python, pandas, NumPy, PyArrow, DuckDB, Shapely, Streamlit, streamlit-folium, Folium/Leaflet, Leaflet.draw, Plotly, LightGBM, PyTorch, scikit-learn, xarray. Tipografía Fira Sans (SIL OFL). Colores de la guía de marca de NASA Space Apps.
 
-    minx, miny, maxx, maxy = geom.bounds
-    # 3) 1 km armonizado
-    st.markdown(f"**{T['dl_1km']}**")
-    if not os.path.exists(DATA_1KM):
-        st.caption(T["dl_missing"].format(f=os.path.basename(DATA_1KM)))
-    elif st.button(T["dl_prep"], key="p_1km"):
-        q = duckdb.sql(f"""SELECT acq_date AS fecha, CAST(lat AS DOUBLE) lat, CAST(lon AS DOUBLE) lon, fuente,
-                                  round(peso, 4) AS focos_armonizados
-                           FROM read_parquet('{DATA_1KM}')
-                           WHERE lat BETWEEN {miny} AND {maxy} AND lon BETWEEN {minx} AND {maxx}
-                             AND acq_date BETWEEN '{D0}' AND '{D1}'""").df()
-        q = q[shapely.contains_xy(geom, q.lon.values, q.lat.values)] if len(q) else q
-        if len(q) > MAX_RAW_ROWS:
-            st.warning(T["dl_toolarge"].format(n=len(q), m=MAX_RAW_ROWS))
-        else:
-            st.session_state["z_1km"] = zip_bytes(f"focos_armonizados_1km_{tag}", q.sort_values("fecha"), T,
-                                                  desc_zone, units)
-            st.caption(T["dl_rows"].format(n=len(q)))
-    if "z_1km" in st.session_state:
-        st.download_button(T["dl_get"], st.session_state["z_1km"], file_name=f"focos_armonizados_1km_{tag}.zip",
-                           mime="application/zip", key="d_1km")
+**Uso de inteligencia artificial:** usamos **Claude (Anthropic)** como asistente para programar, documentar y redactar textos. Todo el código se corrió y los resultados se revisaron por el equipo.
 
-    # 4) focos originales FIRMS
-    st.markdown(f"**{T['dl_raw']}**")
-    if not os.path.isdir(DATA_RAW):
-        st.caption(T["dl_missing"].format(f="data/parquet"))
-    elif st.button(T["dl_prep"], key="p_raw"):
-        q = duckdb.sql(f"""SELECT latitude, longitude, datetime_utc, satellite, sensor, conf_raw AS confidence,
-                                  conf_class, frp, daynight, type
-                           FROM read_parquet('{DATA_RAW}/**/*.parquet', hive_partitioning=true)
-                           WHERE year BETWEEN {D0.year} AND {D1.year}
-                             AND latitude BETWEEN {miny} AND {maxy} AND longitude BETWEEN {minx} AND {maxx}
-                             AND acq_date BETWEEN '{D0}' AND '{D1}'
-                             AND satellite IN ('Terra', 'Aqua', 'SNPP', 'NOAA20')""").df()
-        q = q[shapely.contains_xy(geom, q.longitude.values, q.latitude.values)] if len(q) else q
-        if len(q) > MAX_RAW_ROWS:
-            st.warning(T["dl_toolarge"].format(n=len(q), m=MAX_RAW_ROWS))
-        else:
-            st.session_state["z_raw"] = zip_bytes(f"focos_firms_originales_{tag}", q.sort_values("datetime_utc"), T,
-                                                  desc_zone, "one row per FIRMS hotspot (pixel), not harmonized")
-            st.caption(T["dl_rows"].format(n=len(q)))
-    if "z_raw" in st.session_state:
-        st.download_button(T["dl_get"], st.session_state["z_raw"], file_name=f"focos_firms_originales_{tag}.zip",
-                           mime="application/zip", key="d_raw")
+**Licencia:** código MIT. Firechron es un proyecto del equipo **BurnInHell** para el NASA Space Apps Challenge 2026 (Mendoza). **No es una herramienta oficial de NASA** ni está avalado por la NASA.
+""", """
+**NASA data (project core)**
+- **NASA FIRMS** — Fire Information for Resource Management System: MODIS Collection 6.1 hotspots (Terra and Aqua, 1 km; MCD14ML) and VIIRS 375 m (Suomi NPP — VNP14IMG — and NOAA-20 — VJ114IMG), archive and near real time. https://firms.modaps.eosdis.nasa.gov
+- *We acknowledge the use of data and/or imagery from NASA's Fire Information for Resource Management System (FIRMS) (https://earthdata.nasa.gov/firms), part of NASA's Land, Atmosphere Near real-time Capability for Earth observations (LANCE) (https://earthdata.nasa.gov/lance) and NASA's Earth Science Data and Information System (ESDIS).*
 
-# ------------------------------------------------------------------ pie
-st.markdown("---")
-st.caption(f"{T['footer']}  \n{ACK}")
+**Other open data**
+- **ERA5-Land monthly** (Copernicus Climate Change Service, ECMWF; Muñoz-Sabater et al., 2021) — CC-BY 4.0. *Contains modified Copernicus Climate Change Service information 2026.*
+- **ONI index** (El Niño/La Niña) — NOAA Climate Prediction Center, public domain.
+- **Natural Earth** admin-1 boundaries — public domain.
+- **OpenStreetMap / Nominatim** (place search) — © OpenStreetMap contributors, ODbL. Basemap © OpenStreetMap.
+- **Google News** (public RSS feed) and **GDELT Project** for headlines; **Wikipedia** (CC BY-SA). Only headlines and links are shown.
+
+**Open-source software:** Python, pandas, NumPy, PyArrow, DuckDB, Shapely, Streamlit, streamlit-folium, Folium/Leaflet, Leaflet.draw, Plotly, LightGBM, PyTorch, scikit-learn, xarray. Fira Sans typeface (SIL OFL). Colors from the NASA Space Apps brand guide.
+
+**Use of AI:** we used **Claude (Anthropic)** as an assistant for coding, documentation and copywriting. All code was run and all results reviewed by the team.
+
+**License:** MIT code. Firechron is a project by team **BurnInHell** for the NASA Space Apps Challenge 2026 (Mendoza). **Not an official NASA tool** nor endorsed by NASA.
+"""))
+
+st.markdown(f"<div class='fc-foot'>Firechron · {tr('Equipo', 'Team')} BurnInHell · NASA Space Apps Challenge 2026 · "
+            f"{tr('Datos', 'Data')}: NASA FIRMS (MODIS + VIIRS) · {tr('No es una herramienta oficial de NASA.', 'Not an official NASA tool.')}"
+            f"<br>{ACK}</div>", unsafe_allow_html=True)

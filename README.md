@@ -1,9 +1,9 @@
-# FireCal — Harmonized active-fire calendar (MODIS + VIIRS)
+# Firechron — Harmonized active-fire calendar (MODIS + VIIRS)
 
 Project by team **BurnInHell** for the **NASA Space Apps Challenge 2026** (Mendoza local event), challenge
 *Harmonization of MODIS and VIIRS Hot Spots*. Not an official NASA tool.
 
-FireCal harmonizes 25+ years of satellite active-fire hotspots over South America into one
+Firechron harmonizes 25+ years of satellite active-fire hotspots over South America into one
 consistent series, so the sensor of origin no longer matters, and shows it as an interactive
 burning-activity calendar: pick an area and a period, see which months and years burn most,
 compare the current month with the historical median, and download the data.
@@ -36,7 +36,10 @@ streamlit run app/app.py
   Data and Information System (ESDIS).*
 - MODIS Collection 6.1 Active Fire product (MCD14) and VIIRS 375 m Active Fire product (VNP14IMG / VJ114IMG).
 - Basemap: © OpenStreetMap contributors (ODbL).
-- News tab: GDELT Project DOC 2.0 API (gdeltproject.org), Wikipedia (CC BY-SA); place names from Natural Earth admin-1 (public domain).
+- News: Google News public RSS search feed (headlines and links only), GDELT Project DOC 2.0 API (fallback), Wikipedia (CC BY-SA); place names from Natural Earth admin-1 (public domain).
+- Place search: OpenStreetMap Nominatim (© OpenStreetMap contributors, ODbL).
+- Forecast inputs: ERA5-Land monthly (Copernicus C3S, CC-BY 4.0) and NOAA CPC ONI index.
+- Design: NASA Space Apps brand colors; Fira Sans typeface (SIL OFL).
 - Software (open source): Python, pandas, NumPy, PyArrow, DuckDB, matplotlib, Streamlit, streamlit-folium,
   Folium/Leaflet, Plotly, Shapely.
 - AI assistance: Claude (Anthropic) was used to help write code and documentation; all results were run

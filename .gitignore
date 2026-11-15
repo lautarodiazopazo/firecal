@@ -11,3 +11,7 @@ __pycache__/
 
 # archivo que genera el notebook
 mlp_notebook.py
+
+# reportes de usuarios del buzón (no van al repo)
+app/data/reportes.csv
+app/data/cache_noticias.json
