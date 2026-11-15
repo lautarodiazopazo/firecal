@@ -1,12 +1,12 @@
-# Tema Firechron: colores de la guía de marca de NASA Space Apps (https://www.spaceappschallenge.org/brand/)
+# Tema Firechron: grafito espacial neutro + acentos (amarillo #E2F538, coral #FF8A65)
 [theme]
 base = "dark"
-primaryColor = "#EAFE07"
-backgroundColor = "#07173F"
-secondaryBackgroundColor = "#0B2257"
+primaryColor = "#E2F538"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#1C212B"
 textColor = "#FFFFFF"
-linkColor = "#2E96F5"
-borderColor = "#0960E1"
+linkColor = "#E2F538"
+borderColor = "#30363D"
 baseRadius = "10px"
 
 [client]

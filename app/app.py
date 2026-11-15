@@ -47,13 +47,22 @@ MAX_RAW_ROWS = 1_500_000
 MAX_MAP_POINTS = 1500
 
 # Paleta oficial de NASA Space Apps (guía de marca)
-BLUE_L, BLUE, BLUE_D, NAVY = "#2E96F5", "#0960E1", "#0042A6", "#07173F"
-RED, RED_D, YELLOW, WHITE = "#E43700", "#8E1100", "#EAFE07", "#FFFFFF"
-CARD = "#0B2257"
+# Paleta de datos (rampas de los gráficos)
+BLUE_L, BLUE_D, RED, RED_D = "#2E96F5", "#0042A6", "#E43700", "#8E1100"
+# Paleta de interfaz: grafito espacial neutro + acentos
+NAVY = "#0E1117"      # fondo más oscuro / texto sobre amarillo
+BG2 = "#161B22"       # inputs y botones secundarios
+CARD = "#1C212B"      # tarjetas
+BORDER = "#30363D"    # bordes y grillas
+YELLOW = "#E2F538"    # acento principal
+CORAL = "#FF8A65"     # alertas / anomalía positiva
+TXT2 = "#CBD5E1"      # texto secundario y de gráficos
+WHITE = "#FFFFFF"
+BLUE = BORDER
 
 FIRE_RAMP = [[0.0, NAVY], [0.15, BLUE_D], [0.4, BLUE_L], [0.65, YELLOW], [0.85, RED], [1.0, RED_D]]
 RAMPS = {"Firechron": FIRE_RAMP, "Viridis": "Viridis", "Inferno": "Inferno", "Cividis": "Cividis", "YlOrRd": "YlOrRd"}
-ANOM_RAMP = [[0.0, BLUE_L], [0.5, "#1B2F66"], [0.8, RED], [1.0, YELLOW]]
+ANOM_RAMP = [[0.0, BLUE_L], [0.5, "#2A303B"], [0.8, RED], [1.0, YELLOW]]
 PROB_RAMP = [[0.0, BLUE_D], [0.3, BLUE_L], [0.5, "#5E6C8F"], [0.7, RED], [1.0, YELLOW]]
 
 PRESETS = {
@@ -72,6 +81,17 @@ ACK = ("We acknowledge the use of data and/or imagery from NASA's Fire Informati
        "Near real-time Capability for Earth observations (LANCE) (https://earthdata.nasa.gov/lance) "
        "and NASA's Earth Science Data and Information System (ESDIS).")
 
+import base64 as _b64
+_ASSETS = os.path.join(APP_DIR, "assets")
+
+
+def _img64(name):
+    with open(os.path.join(_ASSETS, name), "rb") as fh:
+        return _b64.b64encode(fh.read()).decode()
+
+
+LOGO_IMG = _img64("logo_firechron.png")
+
 LOGO = f"""<svg viewBox="0 0 64 64" width="{{s}}" height="{{s}}" xmlns="http://www.w3.org/2000/svg" aria-label="Firechron">
 <circle cx="32" cy="32" r="27" fill="none" stroke="{WHITE}" stroke-width="3.5"/>
 <g stroke="{WHITE}" stroke-width="2.5" stroke-linecap="round">
@@ -80,7 +100,8 @@ LOGO = f"""<svg viewBox="0 0 64 64" width="{{s}}" height="{{s}}" xmlns="http://w
 <path d="M32 15c3 7 11 11 11 21a11 11 0 0 1-22 0c0-5 3-8 5-10 0 4 2 6 4 6-1-6 0-11 2-17z" fill="{YELLOW}"/>
 <path d="M32 33c2 3 5 5 5 8a5 5 0 0 1-10 0c0-3 3-5 5-8z" fill="{RED}"/></svg>"""
 
-st.set_page_config(page_title="Firechron · El calendario del fuego en Sudamérica", page_icon="🔥",
+st.set_page_config(page_title="Firechron · El calendario del fuego en Sudamérica",
+                   page_icon=os.path.join(APP_DIR, "assets", "favicon.png"),
                    layout="wide", initial_sidebar_state="collapsed")
 
 # ------------------------------------------------------------------ idioma
@@ -105,12 +126,13 @@ st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600;700;800&family=Fira+Sans+Condensed:wght@600;700;800&display=swap');
 html, body, [class*="css"], .stApp, button, input, textarea, select {{ font-family: 'Fira Sans', sans-serif; }}
-.stApp {{ background: radial-gradient(1200px 600px at 85% -10%, #0B3A9C 0%, rgba(7,23,63,0) 60%),
-          linear-gradient(180deg, #0A2A78 0%, {NAVY} 420px); }}
+.stApp {{ background: linear-gradient(135deg, {BG2} 0%, {NAVY} 100%) !important; color: {WHITE} !important; }}
+[data-testid="stHeader"] {{ background: transparent; }}
+[data-testid="stSidebar"] {{ background: {CARD}; border-right: 1px solid {BORDER}; }}
 [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {{ display: none; }}
 .block-container {{ padding-top: 3.6rem; padding-bottom: 3rem; max-width: 1420px; }}
 h1, h2, h3, h4 {{ font-family: 'Fira Sans Condensed', 'Fira Sans', sans-serif; letter-spacing: .2px; }}
-[class*="st-key-card"] {{ background: {CARD}; border: 1.5px solid {BLUE}; border-radius: 14px; padding: 14px 16px 12px; }}
+[class*="st-key-card"] {{ background: {CARD}; border: 1px solid {BORDER}; border-radius: 10px; padding: 14px 16px 12px; }}
 .fc-ct {{ font-family: 'Fira Sans Condensed', sans-serif; font-weight: 700; font-size: 1.02rem; text-transform: uppercase;
           letter-spacing: .4px; color: {WHITE}; margin: 0 0 2px; }}
 .fc-ct b {{ color: {YELLOW}; margin-right: 6px; }}
@@ -124,23 +146,23 @@ h1, h2, h3, h4 {{ font-family: 'Fira Sans Condensed', 'Fira Sans', sans-serif; l
 .fc-team b {{ color: {YELLOW}; }}
 .fc-pitch {{ font-size: 1.05rem; margin: 10px 0 4px; max-width: 900px; }}
 .fc-steps {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 14px 0 18px; }}
-.fc-step {{ background: rgba(9,96,225,.18); border: 1px solid rgba(46,150,245,.55); border-radius: 12px; padding: 12px;
+.fc-step {{ background: {CARD}; border: 1px solid {BORDER}; border-radius: 10px; padding: 12px;
             display: flex; gap: 10px; align-items: center; }}
 .fc-step .ic {{ flex: 0 0 44px; height: 44px; border-radius: 50%; background: {YELLOW}; color: {NAVY};
                 display: flex; align-items: center; justify-content: center; font-size: 1.35rem; }}
 .fc-step .tx {{ font-size: .93rem; line-height: 1.2; }}
 .fc-step .tx b {{ display: block; color: {YELLOW}; font-family: 'Fira Sans Condensed', sans-serif; font-size: .8rem; }}
 .fc-kpis {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 12px; }}
-.fc-kpi {{ background: {CARD}; border: 1.5px solid {BLUE}; border-radius: 14px; padding: 14px 16px; }}
-.fc-kpi .l {{ font-size: .95rem; opacity: .92; }}
+.fc-kpi {{ background: {CARD}; border: 1px solid {BORDER}; border-radius: 10px; padding: 14px 16px; }}
+.fc-kpi .l {{ font-size: .95rem; color: {TXT2}; }}
 .fc-kpi .v {{ font-family: 'Fira Sans Condensed', sans-serif; font-weight: 800; font-size: 2.1rem; line-height: 1.1; }}
 .fc-kpi .d {{ font-size: 1.15rem; font-weight: 700; }}
-.up {{ color: #FF6A3D; }} .down {{ color: {BLUE_L}; }} .ok {{ color: #7CF29A; }}
-.fc-chip {{ display: inline-block; padding: 4px 12px; border-radius: 999px; background: rgba(46,150,245,.2);
-            border: 1px solid {BLUE_L}; margin: 2px 4px 2px 0; font-size: .9rem; }}
+.up {{ color: {CORAL}; }} .down {{ color: #8AB4F8; }} .ok {{ color: #7CF29A; }}
+.fc-chip {{ display: inline-block; padding: 4px 12px; border-radius: 999px; background: {BG2};
+            border: 1px solid {BORDER}; margin: 2px 4px 2px 0; font-size: .9rem; }}
 .fc-legend {{ font-size: .82rem; opacity: .9; margin-top: 4px; }}
 .fc-sw {{ display:inline-block; width: 70px; height: 9px; border-radius: 5px; vertical-align: middle; margin: 0 6px; }}
-.fc-fc {{ background: {CARD}; border: 1.5px solid {BLUE}; border-radius: 14px; padding: 14px 16px; height: 100%; }}
+.fc-fc {{ background: {CARD}; border: 1px solid {BORDER}; border-radius: 10px; padding: 14px 16px; height: 100%; }}
 .fc-fc .m {{ font-family: 'Fira Sans Condensed', sans-serif; font-weight: 800; font-size: 1.3rem; }}
 .fc-bar {{ height: 10px; background: rgba(255,255,255,.15); border-radius: 6px; overflow: hidden; margin: 6px 0; }}
 .fc-bar > div {{ height: 100%; border-radius: 6px; }}
@@ -148,23 +170,42 @@ h1, h2, h3, h4 {{ font-family: 'Fira Sans Condensed', 'Fira Sans', sans-serif; l
 [class*="st-key-row_"] [data-testid="stColumn"] {{ min-width: 0 !important; width: auto !important; flex: 1 1 auto; }}
 [class*="st-key-row_"] [data-testid="stColumn"]:last-child {{ flex: 0 0 auto; }}
 [class*="st-key-row_chips"] [data-testid="stColumn"], [class*="st-key-row_chips"] [data-testid="stColumn"]:last-child {{ flex: 1 1 0; }}
-.st-key-modebar button {{ min-height: 66px; border-radius: 16px !important; }}
+.st-key-modebar button {{ min-height: 66px; border-radius: 10px !important; }}
+.st-key-btn_hist button[kind="primary"], .st-key-btn_hist button[data-testid="stBaseButton-primary"] {{
+    background: {YELLOW} !important; color: {NAVY} !important; border: none !important; font-weight: 700; }}
+.st-key-btn_hist button[kind="secondary"], .st-key-btn_hist button[data-testid="stBaseButton-secondary"] {{
+    background: {CARD} !important; border: 1px solid {BORDER} !important; color: {WHITE} !important; }}
+.st-key-btn_fc button[kind="primary"], .st-key-btn_fc button[data-testid="stBaseButton-primary"] {{
+    background: {CORAL} !important; color: {NAVY} !important; border: none !important; font-weight: 700; }}
+.st-key-btn_fc button[kind="primary"] p, .st-key-btn_hist button[kind="primary"] p {{ color: {NAVY} !important; }}
 .st-key-modebar button p {{ font-size: 1.2rem !important; font-weight: 700; font-family: 'Fira Sans Condensed', sans-serif; }}
 .st-key-modebar {{ margin: 4px 0 14px; }}
 .st-key-btn_fc button[kind="secondary"], .st-key-btn_fc button[data-testid="stBaseButton-secondary"] {{
-    border: 2px solid {RED} !important; background: linear-gradient(90deg, rgba(228,55,0,.35), rgba(228,55,0,.12)) !important;
-    animation: fcpulse 2.2s ease-in-out infinite; }}
-@keyframes fcpulse {{ 0%,100% {{ box-shadow: 0 0 0 0 rgba(228,55,0,.55); }} 50% {{ box-shadow: 0 0 0 10px rgba(228,55,0,0); }} }}
-.st-key-ctrlbar {{ background: {CARD}; border: 1.5px solid {BLUE}; border-radius: 14px; padding: 8px 12px; }}
-.fc-tip {{ background: rgba(234,254,7,.12); border: 1px dashed {YELLOW}; border-radius: 10px; padding: 8px 12px; margin: 6px 0 4px;
+    background: {CARD} !important; border: 1.5px solid {CORAL} !important; color: {WHITE} !important;
+    animation: fcpulse 2.4s ease-in-out infinite; }}
+@keyframes fcpulse {{ 0%,100% {{ box-shadow: 0 0 0 0 rgba(255,138,101,.45); }} 50% {{ box-shadow: 0 0 0 8px rgba(255,138,101,0); }} }}
+.st-key-ctrlbar {{ background: {CARD}; border: 1px solid {BORDER}; border-radius: 10px; padding: 8px 12px; }}
+.fc-tip {{ background: rgba(226,245,56,.08); border: 1px dashed {YELLOW}; border-radius: 10px; padding: 8px 12px; margin: 6px 0 4px;
            font-size: .95rem; }}
 .fc-foot {{ font-size: .8rem; opacity: .75; margin-top: 30px; }}
 button[kind="primary"], button[data-testid="stBaseButton-primary"] {{ color: {NAVY} !important; font-weight: 700; }}
+[data-baseweb="input"], [data-baseweb="select"] > div, [data-baseweb="textarea"], [data-baseweb="base-input"],
+[data-testid="stNumberInput"] input, [data-testid="stDateInput"] input {{
+    background: {BG2} !important; border-color: {BORDER} !important; color: {WHITE} !important; }}
+[data-baseweb="input"]:hover, [data-baseweb="select"] > div:hover, [data-baseweb="input"]:focus-within {{ border-color: {YELLOW} !important; }}
+button[kind="secondary"], button[data-testid="stBaseButton-secondary"], [data-testid="stPopover"] button,
+[data-testid="stBaseButton-segmented_control"], [data-testid="stDownloadButton"] button {{
+    background: {BG2} !important; border: 1px solid {BORDER} !important; color: {WHITE} !important; }}
+button[kind="secondary"]:hover, button[data-testid="stBaseButton-secondary"]:hover, [data-testid="stPopover"] button:hover,
+[data-testid="stBaseButton-segmented_control"]:hover {{ border-color: {YELLOW} !important; }}
+[data-testid="stDownloadButton"] button[kind="primary"] {{ background: {YELLOW} !important; color: {NAVY} !important; border: none !important; }}
+[data-testid="stExpander"] details {{ background: {CARD}; border: 1px solid {BORDER} !important; border-radius: 10px; }}
+.fc-logo {{ height: 64px; width: auto; display: block; }}
 [data-testid="stSegmentedControl"] button[aria-checked="true"], [data-testid="stBaseButton-segmented_controlActive"] {{
     background: {YELLOW} !important; color: {NAVY} !important; font-weight: 700; }}
 [data-testid="stTabs"] button p {{ font-size: 1rem; }}
 @media (max-width: 640px) {{
-  .fc-name {{ font-size: 2.2rem; }} .fc-tag {{ font-size: 1rem; }}
+  .fc-name {{ font-size: 2.2rem; }} .fc-tag {{ font-size: 1rem; }} .fc-logo {{ height: 40px; }}
   .fc-steps {{ grid-template-columns: 1fr 1fr; gap: 8px; }}
   .fc-step {{ padding: 8px; }} .fc-step .ic {{ flex-basis: 34px; height: 34px; font-size: 1.05rem; }}
   .fc-kpis {{ grid-template-columns: 1fr 1fr; gap: 8px; }}
@@ -338,10 +379,10 @@ def anom_words(a):
 
 def style_fig(fig, h, **kw):
     fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font=dict(family="Fira Sans, sans-serif", color=WHITE, size=13), height=h,
+                      font=dict(family="Fira Sans, sans-serif", color=TXT2, size=13), height=h,
                       **{"margin": dict(l=10, r=10, t=50, b=10), **kw})
-    fig.update_xaxes(gridcolor="rgba(255,255,255,.08)", fixedrange=True)
-    fig.update_yaxes(gridcolor="rgba(255,255,255,.08)", fixedrange=True)
+    fig.update_xaxes(gridcolor=BORDER, fixedrange=True)
+    fig.update_yaxes(gridcolor=BORDER, fixedrange=True)
     fig.update_layout(dragmode=False)
     return fig
 
@@ -413,12 +454,12 @@ st.session_state.setdefault("map_v", 0)
 h1, h2 = st.columns([8, 2], vertical_alignment="top")
 with h1:
     st.markdown(f"""
-<div class="fc-hero">{LOGO.replace('{s}', '86')}
-<div><div class="fc-name"><span>Fire</span>chron</div>
+<div class="fc-hero">
+<div><img class="fc-logo" src="data:image/png;base64,{LOGO_IMG}" alt="Firechron">
 <div class="fc-tag">{tr('Calendario histórico armonizado <i>y</i> pronóstico estacional de fuego',
                          'Harmonized fire history calendar <i>and</i> seasonal fire outlook')}
 <i>· MODIS + VIIRS, 2000–2026</i></div>
-<div class="fc-team">{tr('Equipo', 'Team')} <b>BurnInHell</b> · NASA Space Apps Challenge 2026 · Mendoza, Argentina</div></div></div>
+<div class="fc-team">{tr('Equipo', 'Team')} <b>Firechron</b> · NASA Space Apps Challenge 2026 · Mendoza, Argentina</div></div></div>
 <div class="fc-pitch">{tr('Convertimos <b>25 años de satélites de la NASA</b> en un calendario simple: <b>cuándo y dónde se quema Sudamérica</b>, cómo viene este mes y qué esperar en los <b>próximos 3 meses</b>.',
                           'We turn <b>25 years of NASA satellite data</b> into a simple calendar: <b>when and where South America burns</b>, how this month compares and what to expect over the <b>next 3 months</b>.')}</div>
 """, unsafe_allow_html=True)
@@ -596,12 +637,12 @@ with map_box:
     fmap = folium.Map(location=[-33, -66], zoom_start=4, tiles="OpenStreetMap", control_scale=True,
                       scrollWheelZoom=False, prefer_canvas=True)
     fmap.get_root().header.add_child(folium.Element(
-        "<style>.leaflet-container{background:#07173F}"
-        ".leaflet-tile-pane{filter:invert(1) hue-rotate(200deg) brightness(.75) contrast(1.1) saturate(.6)}"
-        ".fc-zone{filter:drop-shadow(0 0 6px rgba(234,254,7,.8))}</style>"))
+        "<style>.leaflet-container{background:#0E1117}"
+        ".leaflet-tile-pane{filter:invert(1) grayscale(1) brightness(.62) contrast(1.2)}"
+        ".fc-zone{filter:drop-shadow(0 0 6px rgba(226,245,56,.7))}</style>"))
     fg = folium.FeatureGroup(name="zona").add_to(fmap)
     folium.GeoJson(shapely.geometry.mapping(GEOM), style_function=lambda _: {
-        "color": YELLOW, "weight": 2.5, "fillColor": YELLOW, "fillOpacity": 0.10, "className": "fc-zone"}).add_to(fg)
+        "color": YELLOW, "weight": 2.5, "fillColor": YELLOW, "fillOpacity": 0.12, "className": "fc-zone"}).add_to(fg)
     if FORECAST and len(pz):
         feats = [{"type": "Feature", "geometry": shapely.geometry.mapping(shapely.box(r.lon - .25, r.lat - .25, r.lon + .25, r.lat + .25)),
                   "properties": {"c": ramp_color(PROB_RAMP, r.prob),
