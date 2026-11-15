@@ -363,7 +363,7 @@ def card_title(num, text, help_md=None):
 
 
 def help_pop(md, label="?"):
-    with st.popover(label, icon=":material/help:" if label != "?" else None):
+    with st.popover(label):
         st.markdown(md)
 
 
@@ -448,7 +448,9 @@ st.markdown(f"""
 st.session_state.setdefault("fc_mode", False)
 with st.container(key="modebar"):
     mb1, mb2 = st.columns(2)
-    if mb1.button(tr("📅  Ver la historia · 2000–2026", "📅  See the history · 2000–2026"), key="btn_hist",
+    _ya, _yb = st.session_state.get("yrs", (DMIN.year, DMAX.year))
+    _per = f"{_ya}–{_yb}" if _ya != _yb else f"{_ya}"
+    if mb1.button(tr(f"📅  Ver la historia · {_per}", f"📅  See the history · {_per}"), key="btn_hist",
                   type="secondary" if st.session_state.fc_mode else "primary", width="stretch"):
         st.session_state.fc_mode = False
         st.rerun()
