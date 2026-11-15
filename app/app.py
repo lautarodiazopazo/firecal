@@ -450,6 +450,7 @@ if "zone" not in st.session_state:
         a, b, c, d = noticias.GAZ["Luján de Cuyo, Mendoza"]
         set_zone(shapely.to_wkt(box(c, a, d, b)), "Luján de Cuyo, Mendoza", "Luján de Cuyo")
 st.session_state.setdefault("map_v", 0)
+st.session_state.setdefault("show_pts", True)  # focos visibles por defecto
 
 # ================================================================== 1. CABECERA
 h1, h2 = st.columns([8, 2], vertical_alignment="top")
@@ -654,7 +655,7 @@ with map_box:
                        style_function=lambda f: {"color": f["properties"]["c"], "weight": 0.5, "fillColor": f["properties"]["c"],
                                                  "fillOpacity": 0.55},
                        tooltip=folium.GeoJsonTooltip(["t"], labels=False)).add_to(fmap)
-    elif HAS and len(agg) and st.session_state.get("show_pts", False):
+    elif HAS and len(agg) and st.session_state.get("show_pts", True):
         pts = agg.copy()
         if len(pts) > MAX_MAP_POINTS:  # agregamos a celdas más grandes para no saturar el mapa
             k = int(math.ceil(math.sqrt(len(pts) / MAX_MAP_POINTS)))
@@ -704,7 +705,7 @@ with map_box:
         lc1.markdown(f"<div class='fc-legend'>{tr('Probabilidad de más fuego de lo normal', 'Chance of above-normal fire')}: "
                      f"0 %<span class='fc-sw' style='background:{grad}'></span>100 % · {tr('cuadros de ~50 km', '~50 km squares')}</div>",
                      unsafe_allow_html=True)
-    elif st.session_state.get("show_pts", False):
+    elif st.session_state.get("show_pts", True):
         grad = "linear-gradient(90deg," + ",".join(c for _, c in FIRE_RAMP[1:]) + ")"
         lc1.markdown(f"<div class='fc-legend'>{tr('Cada punto = un área de ~11 km', 'Each dot = a ~11 km area')} · "
                      f"{tr('pocos', 'few')}<span class='fc-sw' style='background:{grad}'></span>{tr('muchos focos', 'many hotspots')} "
