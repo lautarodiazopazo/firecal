@@ -572,7 +572,7 @@ with colM:
                        style_function=lambda f: {"color": f["properties"]["c"], "weight": 0.5, "fillColor": f["properties"]["c"],
                                                  "fillOpacity": 0.55},
                        tooltip=folium.GeoJsonTooltip(["t"], labels=False)).add_to(fmap)
-    elif HAS and len(agg):
+    elif HAS and len(agg) and st.session_state.get("show_pts", False):
         pts = agg.copy()
         if len(pts) > MAX_MAP_POINTS:  # agregamos a celdas más grandes para no saturar el mapa
             k = int(math.ceil(math.sqrt(len(pts) / MAX_MAP_POINTS)))
@@ -621,6 +621,8 @@ with colM:
                      f"0 %<span class='fc-sw' style='background:{grad}'></span>100 % · {tr('cuadros de ~50 km', '~50 km squares')}</div>",
                      unsafe_allow_html=True)
     else:
+        lc1.toggle(tr("🔥 Mostrar focos en el mapa", "🔥 Show hotspots on the map"), key="show_pts")
+    if not FORECAST and st.session_state.get("show_pts", False):
         grad = "linear-gradient(90deg," + ",".join(c for _, c in FIRE_RAMP[1:]) + ")"
         lc1.markdown(f"<div class='fc-legend'>{tr('Cada punto = un área de ~11 km', 'Each dot = a ~11 km area')} · "
                      f"{tr('pocos', 'few')}<span class='fc-sw' style='background:{grad}'></span>{tr('muchos focos', 'many hotspots')} "
