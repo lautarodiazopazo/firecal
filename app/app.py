@@ -318,9 +318,9 @@ def anom_words(a):
     r = 1 + a / 100
     if a >= 15:
         return (tr(f"{fmt(r, 1)} veces lo normal", f"{fmt(r, 1)}× normal") if r >= 2 else
-                tr(f"{a:+.0f} % más que lo normal", f"{a:+.0f}% above normal")), "up"
+                tr(f"{a:+.0f} % más de lo normal", f"{a:+.0f}% above normal")), "up"
     if a <= -15:
-        return tr(f"{abs(a):.0f} % menos que lo normal", f"{abs(a):.0f}% below normal"), "down"
+        return tr(f"{abs(a):.0f} % menos de lo normal", f"{abs(a):.0f}% below normal"), "down"
     return tr("dentro de lo normal", "about normal"), "ok"
 
 
@@ -565,7 +565,7 @@ with colM:
     if FORECAST and len(pz):
         feats = [{"type": "Feature", "geometry": shapely.geometry.mapping(shapely.box(r.lon - .25, r.lat - .25, r.lon + .25, r.lat + .25)),
                   "properties": {"c": ramp_color(PROB_RAMP, r.prob),
-                                 "t": tr(f"Prob. de más fuego que lo normal: {r.prob * 100:.0f} %",
+                                 "t": tr(f"Prob. de más fuego de lo normal: {r.prob * 100:.0f} %",
                                          f"Chance of above-normal fire: {r.prob * 100:.0f}%")}}
                  for r in pz.itertuples()]
         folium.GeoJson({"type": "FeatureCollection", "features": feats},
@@ -617,7 +617,7 @@ with colM:
     lc1, lc2 = st.columns([3, 1], vertical_alignment="center")
     if FORECAST:
         grad = "linear-gradient(90deg," + ",".join(c for _, c in PROB_RAMP) + ")"
-        lc1.markdown(f"<div class='fc-legend'>{tr('Probabilidad de más fuego que lo normal', 'Chance of above-normal fire')}: "
+        lc1.markdown(f"<div class='fc-legend'>{tr('Probabilidad de más fuego de lo normal', 'Chance of above-normal fire')}: "
                      f"0 %<span class='fc-sw' style='background:{grad}'></span>100 % · {tr('cuadros de ~50 km', '~50 km squares')}</div>",
                      unsafe_allow_html=True)
     else:
@@ -644,7 +644,7 @@ with colR:
                         (tr("Dentro de lo normal", "About normal"), "ok"))
         st.markdown(f"""<div class="fc-kpis">
 <div class="fc-kpi"><div class="l">{tr('Pronóstico para', 'Outlook for')} {MONTHS_L[FM - 1]} {FY}</div><div class="v {cls}" style="font-size:1.55rem">{verdict}</div></div>
-<div class="fc-kpi"><div class="l">{tr('Probabilidad de un mes con más fuego que lo normal', 'Chance of a month with above-normal fire')}</div><div class="v">{p * 100:.0f} %</div></div>
+<div class="fc-kpi"><div class="l">{tr('Probabilidad de un mes con más fuego de lo normal', 'Chance of a month with above-normal fire')}</div><div class="v">{p * 100:.0f} %</div></div>
 <div class="fc-kpi"><div class="l">{tr('Lo habitual (2003–2019)', 'Usual (2003–2019)')}</div><div class="v">{pc_ * 100:.0f} %</div><div class="l">{tr('de los años', 'of years')}</div></div>
 <div class="fc-kpi"><div class="l">{tr('Focos en un', 'Hotspots in a typical')} {MONTHS_L[FM - 1]} {tr('típico', '')}</div><div class="v">{fmt(hist_m.median())}</div></div>
 </div>""", unsafe_allow_html=True)
@@ -748,7 +748,7 @@ with colN:
             st.markdown(", ".join(f"{p}" for p, _ in provs) or ", ".join(noticias.COUNTRY_ES.get(c, c) for c in ctrs))
         if HAS and len(mt):
             cand = mt.assign(exceso=mt.focos - mt["median"].fillna(0)).sort_values("exceso", ascending=False).head(3)
-            st.caption(tr("Meses con más fuego que lo normal:", "Months with most excess fire:"))
+            st.caption(tr("Meses con más fuego de lo normal:", "Months with most excess fire:"))
             cc = st.container(key="row_chips").columns(3)
             for i, r in enumerate(cand.itertuples()):
                 if cc[i].button(f"{MONTHS[int(r.month) - 1]} {int(r.year)}", key=f"chip{i}", width="stretch"):
@@ -763,7 +763,7 @@ with colC:
                 p, pc_ = zone_prob(yy, mm)
                 col = ramp_color(PROB_RAMP, p) if not np.isnan(p) else "#666"
                 fc[i].markdown(f"""<div class="fc-fc"><div class="m">{MONTHS_L[mm - 1].capitalize()} {yy}</div>
-<div class="l">{tr('Prob. de más fuego que lo normal', 'Chance of above-normal fire')}</div>
+<div class="l">{tr('Prob. de más fuego de lo normal', 'Chance of above-normal fire')}</div>
 <div class="fc-kpi" style="border:0;padding:0;background:none"><div class="v">{'–' if np.isnan(p) else f'{p * 100:.0f} %'}</div></div>
 <div class="fc-bar"><div style="width:{0 if np.isnan(p) else p * 100:.0f}%;background:{col}"></div></div>
 <div class="l">{tr('Habitual', 'Usual')}: {'–' if np.isnan(pc_) else f'{pc_ * 100:.0f} %'} · {tr('anticipación', 'lead')}: {ll} {tr('mes' if ll == 1 else 'meses', 'month' if ll == 1 else 'months')}</div></div>""",
