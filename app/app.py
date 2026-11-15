@@ -587,12 +587,12 @@ with colM:
         pts = pts.assign(v=np.clip(lv / vmax, 0, 1)).sort_values("v")
         feats = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [r.lon, r.lat]},
                   "properties": {"c": ramp_color(RAMPS[ramp] if not ANOM else FIRE_RAMP, 0.25 + 0.75 * r.v),
-                                 "r": 2 + 6 * r.v, "t": f"{fmt(r.focos)} {tr('focos', 'hotspots')}"}}
+                                 "r": 1.5 + 3.5 * r.v, "t": f"{fmt(r.focos)} {tr('focos', 'hotspots')}"}}
                  for r in pts.itertuples()]
         folium.GeoJson({"type": "FeatureCollection", "features": feats},
-                       marker=folium.CircleMarker(),
+                       marker=folium.CircleMarker(radius=4, fill=True),
                        style_function=lambda f: {"radius": f["properties"]["r"], "color": f["properties"]["c"],
-                                                 "weight": 0, "fillColor": f["properties"]["c"], "fillOpacity": 0.85},
+                                                 "weight": 0, "fill": True, "fillColor": f["properties"]["c"], "fillOpacity": 0.85},
                        tooltip=folium.GeoJsonTooltip(["t"], labels=False)).add_to(fmap)
     minx, miny, maxx, maxy = GEOM.bounds
     fmap.fit_bounds([[miny, minx], [maxy, maxx]], padding=(20, 20))
