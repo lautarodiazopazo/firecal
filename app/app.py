@@ -476,7 +476,7 @@ with h2:
                        "No es una herramienta oficial de NASA.",
                        "**Firechron** is a project by team BurnInHell for the NASA Space Apps Challenge 2026. "
                        "Not an official NASA tool."))
-        st.markdown("[GitHub](https://github.com/lautarodiazopazo/firecal)")
+        st.markdown("[GitHub](https://github.com/matigrojas/firechron)")
 
 # ================================================================== 2. INSTRUCTIVO
 st.markdown(f"""
