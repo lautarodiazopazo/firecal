@@ -128,6 +128,9 @@ st.markdown(f"""
 html, body, [class*="css"], .stApp, button, input, textarea, select {{ font-family: 'Fira Sans', sans-serif; }}
 .stApp {{ background: linear-gradient(135deg, {BG2} 0%, {NAVY} 100%) !important; color: {WHITE} !important; }}
 [data-testid="stHeader"] {{ background: transparent; }}
+/* ocultar la barra de Streamlit Cloud (Share, estrella, editar, GitHub) */
+[data-testid="stToolbar"], [data-testid="stToolbarActions"], [data-testid="stAppDeployButton"],
+[data-testid="stMainMenu"], .stAppDeployButton {{ display: none !important; }}
 [data-testid="stSidebar"] {{ background: {CARD}; border-right: 1px solid {BORDER}; }}
 [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {{ display: none; }}
 .block-container {{ padding-top: 3.6rem; padding-bottom: 3rem; max-width: 1420px; }}
